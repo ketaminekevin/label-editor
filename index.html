@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Label Overlay Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    .drop-zone { transition: background-color 0.15s, border-color 0.15s; }
+    .drop-zone.dragover { background-color: #eff6ff; border-color: #3b82f6; }
+    .drop-zone.has-file  { background-color: #f0fdf4; border-color: #22c55e; }
+    #editor { display: block; touch-action: none; }
+  </style>
+</head>
+<body class="min-h-screen bg-gray-100 p-4 md:p-8">
+  <div class="max-w-3xl mx-auto space-y-5">
+
+    <!-- Header -->
+    <div class="text-center pt-2">
+      <h1 class="text-2xl font-bold text-gray-800">Label Overlay Tool</h1>
+      <p class="text-gray-500 text-sm mt-1">Upload a shipping label PDF, crop it, position your logo, and download.</p>
+    </div>
+
+    <!-- Upload Row -->
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Shipping Label (PDF)</p>
+        <div id="pdfZone"
+          class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+          onclick="document.getElementById('pdfInput').click()">
+          <input type="file" id="pdfInput" accept=".pdf,application/pdf" class="hidden" />
+          <div id="pdfZoneText">
+            <svg class="mx-auto mb-1 w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <p class="text-xs text-gray-500">Drop PDF or <span class="text-blue-600">browse</span></p>
+          </div>
+          <p id="pdfZoneName" class="hidden text-xs text-green-700 font-medium"></p>
+        </div>
+      </div>
+
+      <div>
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Logo Image (PNG or JPG)</p>
+        <div id="logoZone"
+          class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+          onclick="document.getElementById('logoInput').click()">
+          <input type="file" id="logoInput" accept="image/png,image/jpeg" class="hidden" />
+          <div id="logoZoneText">
+            <svg class="mx-auto mb-1 w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            <p class="text-xs text-gray-500">Drop logo or <span class="text-blue-600">browse</span></p>
+          </div>
+          <img id="logoThumb" class="hidden mx-auto max-h-10 rounded mt-1" alt="Logo preview" />
+          <p id="logoZoneName" class="hidden text-xs text-green-700 font-medium mt-1"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Editor (shown after both files loaded) -->
+    <div id="editorSection" class="hidden bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+        <p class="text-sm font-semibold text-gray-700">Preview &amp; Editor</p>
+        <p class="text-xs text-gray-400">
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 mr-1 align-middle"></span>Corners = crop &nbsp;
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-white border-2 border-gray-500 mr-1 align-middle"></span>Logo corner = resize &nbsp;
+          <span class="text-gray-500">Drag logo to move</span>
+        </p>
+      </div>
+      <div class="p-4 flex justify-center bg-gray-50">
+        <canvas id="editor" class="rounded-lg border border-gray-200 shadow-sm"></canvas>
+      </div>
+    </div>
+
+    <!-- Action -->
+    <div id="actionSection" class="hidden space-y-2">
+      <button id="processBtn" onclick="processLabel()"
+        class="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        Process &amp; Download
+      </button>
+      <p id="statusMsg" class="hidden text-center text-sm font-medium"></p>
+    </div>
+
+    <p class="text-center text-xs text-gray-400 pb-2">Files are processed in your browser — nothing is uploaded to any server.</p>
+  </div>
+
+<script>
+// ── PDF.js ────────────────────────────────────────────────────────────────────
+const pdfjsLib = window['pdfjs-dist/build/pdf'];
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const HR       = 8;   // handle hit-radius px
+const MIN_CROP = 40;  // minimum crop side px
+const MIN_LOGO = 20;  // minimum logo width px
+const LOGO_PAD = 8;   // default padding when initialising logo position
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const S = {
+  // Raw file bytes — stored as Uint8Array so they are NEVER transferred/detached.
+  // (ArrayBuffer.prototype.slice is what detaches; Uint8Array copies safely.)
+  pdfBytes:   null,   // Uint8Array
+  logoBytes:  null,   // Uint8Array
+  logoType:   'png',
+
+  pdfPageW:   0,      // PDF page width  in points
+  pdfPageH:   0,      // PDF page height in points
+  scale:      1,      // canvas px per PDF point
+
+  pdfBitmap:  null,   // offscreen <canvas> with the rendered PDF page
+  logoImg:    new Image(),
+  logoAspect: 1,      // logo naturalWidth / naturalHeight
+
+  // Logo geometry in canvas px
+  logoX:  0,
+  logoY:  0,
+  logoW:  80,
+
+  // Crop rectangle in canvas px
+  crop: { x: 0, y: 0, w: 0, h: 0 },
+
+  drag: null,
+};
+
+const canvas = document.getElementById('editor');
+const ctx    = canvas.getContext('2d');
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const dist  = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+const clamp = (v, lo, hi)      => Math.max(lo, Math.min(hi, v));
+
+function getLogoRect() {
+  return { x: S.logoX, y: S.logoY, w: S.logoW, h: S.logoW / S.logoAspect };
+}
+
+/** Four crop corners, each with its own position (cx,cy) and opposite/fixed corner (fx,fy). */
+function getCropCorners() {
+  const { x, y, w, h } = S.crop;
+  return [
+    { cx: x,     cy: y,     fx: x + w, fy: y + h },
+    { cx: x + w, cy: y,     fx: x,     fy: y + h },
+    { cx: x,     cy: y + h, fx: x + w, fy: y     },
+    { cx: x + w, cy: y + h, fx: x,     fy: y     },
+  ];
+}
+
+/** Keep logo fully inside the crop box. */
+function constrainLogo() {
+  const h = S.logoW / S.logoAspect;
+  S.logoX = clamp(S.logoX, S.crop.x, S.crop.x + S.crop.w - S.logoW);
+  S.logoY = clamp(S.logoY, S.crop.y, S.crop.y + S.crop.h - h);
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function render() {
+  const { crop, logoImg } = S;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 1. PDF background
+  if (S.pdfBitmap) ctx.drawImage(S.pdfBitmap, 0, 0);
+
+  // 2. Dark overlay outside crop (four rects surrounding it)
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0,              0,              canvas.width,                       crop.y);
+  ctx.fillRect(0,              crop.y + crop.h, canvas.width,                      canvas.height - crop.y - crop.h);
+  ctx.fillRect(0,              crop.y,          crop.x,                            crop.h);
+  ctx.fillRect(crop.x + crop.w, crop.y,         canvas.width - crop.x - crop.w,   crop.h);
+
+  // 3. Rule-of-thirds lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    const gx = crop.x + (crop.w / 3) * i;
+    const gy = crop.y + (crop.h / 3) * i;
+    line(gx, crop.y,  gx, crop.y + crop.h);
+    line(crop.x, gy,  crop.x + crop.w, gy);
+  }
+
+  // 4. Crop border
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(crop.x + 1, crop.y + 1, crop.w - 2, crop.h - 2);
+
+  // 5. Crop corner handles (blue, white outline)
+  for (const { cx, cy } of getCropCorners()) {
+    handle(cx, cy, '#3b82f6', '#ffffff');
+  }
+
+  // 6. Logo
+  if (logoImg.complete && logoImg.naturalWidth) {
+    const lr = getLogoRect();
+
+    // White backing to erase whatever is under the logo
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(lr.x, lr.y, lr.w, lr.h);
+    ctx.drawImage(logoImg, lr.x, lr.y, lr.w, lr.h);
+
+    // Dashed border
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(lr.x - 1, lr.y - 1, lr.w + 2, lr.h + 2);
+    ctx.setLineDash([]);
+
+    // Resize handle at bottom-right of logo (white, dark outline)
+    handle(lr.x + lr.w, lr.y + lr.h, '#ffffff', '#374151');
+
+    // Small icon inside resize handle
+    ctx.fillStyle = '#374151';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⤡', lr.x + lr.w, lr.y + lr.h);
+  }
+}
+
+function line(x1, y1, x2, y2) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+function handle(x, y, fill, stroke) {
+  ctx.fillStyle = fill;
+  ctx.beginPath(); ctx.arc(x, y, HR, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = stroke; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y, HR, 0, Math.PI * 2); ctx.stroke();
+}
+
+// ── Hit-testing ───────────────────────────────────────────────────────────────
+function hitTest(mx, my) {
+  if (S.logoImg.complete && S.logoImg.naturalWidth) {
+    const lr = getLogoRect();
+
+    // Logo resize handle (BR corner) — checked before body so small logos still work
+    if (dist(mx, my, lr.x + lr.w, lr.y + lr.h) <= HR + 3)
+      return { type: 'logo-resize' };
+
+    // Logo body → move
+    if (mx >= lr.x && mx <= lr.x + lr.w && my >= lr.y && my <= lr.y + lr.h)
+      return { type: 'logo-move', offX: mx - S.logoX, offY: my - S.logoY };
+  }
+
+  // Crop corner handles
+  for (const c of getCropCorners()) {
+    if (dist(mx, my, c.cx, c.cy) <= HR + 3)
+      return { type: 'crop-corner', fx: c.fx, fy: c.fy };
+  }
+
+  // Inside crop box → move the crop
+  if (mx > S.crop.x && mx < S.crop.x + S.crop.w &&
+      my > S.crop.y && my < S.crop.y + S.crop.h)
+    return { type: 'crop-move', startX: mx, startY: my, origCrop: { ...S.crop } };
+
+  return null;
+}
+
+function cursorFor(mx, my) {
+  const h = hitTest(mx, my);
+  if (!h) return 'default';
+  if (h.type === 'logo-resize') return 'nwse-resize';
+  if (h.type === 'logo-move')   return 'grab';
+  if (h.type === 'crop-corner') return 'nwse-resize';
+  if (h.type === 'crop-move')   return 'move';
+}
+
+// ── Drag application ──────────────────────────────────────────────────────────
+function applyDrag(mx, my) {
+  const d = S.drag;
+  if (!d) return;
+
+  if (d.type === 'crop-corner') {
+    // Fixed corner stays at (fx,fy); drag corner follows mouse.
+    const x1 = Math.min(mx, d.fx), x2 = Math.max(mx, d.fx);
+    const y1 = Math.min(my, d.fy), y2 = Math.max(my, d.fy);
+    S.crop.x = clamp(x1, 0, canvas.width  - MIN_CROP);
+    S.crop.y = clamp(y1, 0, canvas.height - MIN_CROP);
+    S.crop.w = clamp(x2 - S.crop.x, MIN_CROP, canvas.width  - S.crop.x);
+    S.crop.h = clamp(y2 - S.crop.y, MIN_CROP, canvas.height - S.crop.y);
+    constrainLogo();
+  }
+
+  if (d.type === 'crop-move') {
+    const dx = mx - d.startX, dy = my - d.startY;
+    S.crop.x = clamp(d.origCrop.x + dx, 0, canvas.width  - S.crop.w);
+    S.crop.y = clamp(d.origCrop.y + dy, 0, canvas.height - S.crop.h);
+    constrainLogo();
+  }
+
+  if (d.type === 'logo-move') {
+    const logoH = S.logoW / S.logoAspect;
+    S.logoX = clamp(mx - d.offX, S.crop.x, S.crop.x + S.crop.w - S.logoW);
+    S.logoY = clamp(my - d.offY, S.crop.y, S.crop.y + S.crop.h - logoH);
+  }
+
+  if (d.type === 'logo-resize') {
+    // Top-left of logo is fixed at (S.logoX, S.logoY); BR corner follows mouse.
+    const maxWByX = S.crop.x + S.crop.w - S.logoX;
+    const maxWByY = (S.crop.y + S.crop.h - S.logoY) * S.logoAspect;
+    S.logoW = clamp(mx - S.logoX, MIN_LOGO, Math.min(maxWByX, maxWByY));
+  }
+}
+
+// ── Pointer events ────────────────────────────────────────────────────────────
+function getPos(e) {
+  const rect  = canvas.getBoundingClientRect();
+  const sX    = canvas.width  / rect.width;
+  const sY    = canvas.height / rect.height;
+  const src   = e.touches ? e.touches[0] : e;
+  return { x: (src.clientX - rect.left) * sX, y: (src.clientY - rect.top) * sY };
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  const p = getPos(e);
+  S.drag = hitTest(p.x, p.y);
+});
+canvas.addEventListener('mousemove', (e) => {
+  const p = getPos(e);
+  canvas.style.cursor = S.drag ? 'grabbing' : (cursorFor(p.x, p.y) || 'default');
+  if (!S.drag) return;
+  applyDrag(p.x, p.y);
+  render();
+});
+canvas.addEventListener('mouseup',    () => { S.drag = null; });
+canvas.addEventListener('mouseleave', () => { S.drag = null; });
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  S.drag = hitTest(...Object.values(getPos(e)));
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!S.drag) return;
+  const p = getPos(e);
+  applyDrag(p.x, p.y);
+  render();
+}, { passive: false });
+canvas.addEventListener('touchend', () => { S.drag = null; });
+
+// ── Drop zone setup ───────────────────────────────────────────────────────────
+function setupDropZone(zoneId, inputId, handler) {
+  const zone = document.getElementById(zoneId);
+  zone.addEventListener('dragover',  (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', ()  => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0]; if (f) handler(f);
+  });
+  document.getElementById(inputId).addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (f) handler(f);
+  });
+}
+
+// ── PDF handler ───────────────────────────────────────────────────────────────
+setupDropZone('pdfZone', 'pdfInput', async (file) => {
+  if (!file.name.endsWith('.pdf') && file.type !== 'application/pdf')
+    return showStatus('Please upload a PDF file.', 'error');
+
+  // Store as Uint8Array — safe to read multiple times without detaching.
+  S.pdfBytes = new Uint8Array(await file.arrayBuffer());
+
+  document.getElementById('pdfZoneText').classList.add('hidden');
+  const n = document.getElementById('pdfZoneName');
+  n.textContent = '✓ ' + file.name; n.classList.remove('hidden');
+  document.getElementById('pdfZone').classList.add('has-file');
+
+  await renderPdfPreview();
+  checkReady();
+});
+
+// ── Logo handler ──────────────────────────────────────────────────────────────
+setupDropZone('logoZone', 'logoInput', async (file) => {
+  if (!file.type.startsWith('image/'))
+    return showStatus('Please upload a PNG or JPG image.', 'error');
+
+  S.logoBytes = new Uint8Array(await file.arrayBuffer());
+  S.logoType  = (file.type === 'image/png' || file.name.toLowerCase().endsWith('.png')) ? 'png' : 'jpg';
+
+  const url = URL.createObjectURL(file);
+  S.logoImg.src = url;
+  await new Promise(res => { S.logoImg.onload = res; S.logoImg.onerror = res; });
+  S.logoAspect = (S.logoImg.naturalWidth / S.logoImg.naturalHeight) || 1;
+
+  const thumb = document.getElementById('logoThumb');
+  thumb.src = url; thumb.classList.remove('hidden');
+  document.getElementById('logoZoneText').classList.add('hidden');
+  const n = document.getElementById('logoZoneName');
+  n.textContent = '✓ ' + file.name; n.classList.remove('hidden');
+  document.getElementById('logoZone').classList.add('has-file');
+
+  if (S.pdfBitmap) { initLogo(); render(); }
+  checkReady();
+});
+
+// ── PDF preview via PDF.js ────────────────────────────────────────────────────
+async function renderPdfPreview() {
+  // Pass a copy so pdf.js worker transfer cannot detach S.pdfBytes.
+  const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
+  const page   = await pdfDoc.getPage(1);
+  const rawVp  = page.getViewport({ scale: 1 });
+
+  S.pdfPageW = rawVp.width;
+  S.pdfPageH = rawVp.height;
+
+  const maxW = Math.min(720, (window.innerWidth || 900) - 80);
+  S.scale    = maxW / rawVp.width;
+  const vp   = page.getViewport({ scale: S.scale });
+
+  canvas.width  = Math.round(vp.width);
+  canvas.height = Math.round(vp.height);
+
+  const off = document.createElement('canvas');
+  off.width = canvas.width; off.height = canvas.height;
+  await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
+  S.pdfBitmap = off;
+
+  // Default crop = full page with small inset
+  const inset = 10;
+  S.crop = { x: inset, y: inset, w: canvas.width - 2 * inset, h: canvas.height - 2 * inset };
+  initLogo();
+  render();
+}
+
+/** Place logo at bottom-right of crop, 25% of crop width. */
+function initLogo() {
+  S.logoW = clamp(Math.round(S.crop.w * 0.25), MIN_LOGO, S.crop.w - 2 * LOGO_PAD);
+  const h = S.logoW / S.logoAspect;
+  S.logoX = S.crop.x + S.crop.w - S.logoW - LOGO_PAD;
+  S.logoY = S.crop.y + S.crop.h - h      - LOGO_PAD;
+}
+
+function checkReady() {
+  const ready = S.pdfBitmap && S.logoImg.complete && S.logoImg.naturalWidth;
+  document.getElementById('editorSection').classList.toggle('hidden', !ready);
+  document.getElementById('actionSection').classList.toggle('hidden', !ready);
+  if (ready) render();
+}
+
+// ── PDF processing & download ─────────────────────────────────────────────────
+async function processLabel() {
+  const btn = document.getElementById('processBtn');
+  btn.disabled = true;
+  showStatus('Processing…', 'info');
+
+  try {
+    // ── Coordinate conversion helpers ──────────────────────────────────────
+    // Canvas: origin top-left,    y increases downward
+    // PDF:    origin bottom-left, y increases upward
+    const toPdfX = (px) => px / S.scale;
+    const toPdfY = (py) => S.pdfPageH - py / S.scale;  // flip axis
+
+    // Crop region in PDF points (bottom-left origin)
+    const cropLeft   = toPdfX(S.crop.x);
+    const cropBottom = toPdfY(S.crop.y + S.crop.h);    // canvas bottom → PDF bottom
+    const cropW      = toPdfX(S.crop.w);
+    const cropH      = toPdfX(S.crop.h);               // height is a scalar, not a flipped coord
+
+    // ── Logo in new-page coordinate space ──────────────────────────────────
+    const lr   = getLogoRect();   // canvas px
+    const logoX = toPdfX(lr.x) - cropLeft;
+    const logoY = toPdfY(lr.y + lr.h) - cropBottom;
+    const logoW = toPdfX(lr.w);
+    const logoH = toPdfX(lr.h);
+
+    // ── Load original PDF and create output PDF ────────────────────────────
+    const origPdf   = await PDFLib.PDFDocument.load(S.pdfBytes.slice());
+    const newPdf    = await PDFLib.PDFDocument.create();
+    const origPages = origPdf.getPages();
+    const pageCount = origPages.length;
+
+    // Embed the logo image once — reused across all pages
+    const logoEmbed = S.logoType === 'png'
+      ? await newPdf.embedPng(S.logoBytes.slice())
+      : await newPdf.embedJpg(S.logoBytes.slice());
+
+    // ── Process every page ─────────────────────────────────────────────────
+    for (let i = 0; i < pageCount; i++) {
+      showStatus(`Processing page ${i + 1} of ${pageCount}…`, 'info');
+
+      // Embed this source page into the output document
+      const [embedded] = await newPdf.embedPages([origPages[i]]);
+
+      // New page physically sized to the crop rectangle
+      const newPage = newPdf.addPage([cropW, cropH]);
+
+      // Shift original content so crop region maps to (0, 0)
+      // Uses page-1 dimensions for scale (labels are always uniform size)
+      newPage.drawPage(embedded, {
+        x:      -cropLeft,
+        y:      -cropBottom,
+        width:   S.pdfPageW,
+        height:  S.pdfPageH,
+      });
+
+      // White rectangle to cover return address, then logo on top
+      newPage.drawRectangle({ x: logoX, y: logoY, width: logoW, height: logoH, color: PDFLib.rgb(1, 1, 1) });
+      newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
+    }
+
+    // ── Download ───────────────────────────────────────────────────────────
+    const bytes = await newPdf.save();
+    const blob  = new Blob([bytes], { type: 'application/pdf' });
+    const url   = URL.createObjectURL(blob);
+    const a     = document.createElement('a');
+    a.href = url; a.download = 'labels-modified.pdf'; a.click();
+    URL.revokeObjectURL(url);
+
+    showStatus(`Done! ${pageCount} page${pageCount !== 1 ? 's' : ''} downloaded.`, 'success');
+  } catch (err) {
+    console.error(err);
+    showStatus('Error: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Status helper ─────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg;
+  el.className = 'text-center text-sm font-medium ' + (
+    type === 'error'   ? 'text-red-600'   :
+    type === 'success' ? 'text-green-600' : 'text-blue-600'
+  );
+  el.classList.remove('hidden');
+}
+</script>
+</body>
+</html>
