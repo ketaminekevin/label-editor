@@ -12,6 +12,13 @@
     .drop-zone.dragover { background-color: #eff6ff; border-color: #3b82f6; }
     .drop-zone.has-file  { background-color: #f0fdf4; border-color: #22c55e; }
     #editor { display: block; touch-action: none; }
+    .type-btn span {
+      display: block; padding: 6px 16px; border: 1.5px solid #d1d5db; border-radius: 8px;
+      font-size: 13px; font-weight: 500; cursor: pointer; color: #374151;
+      transition: all 0.15s; user-select: none; white-space: nowrap;
+    }
+    .type-btn span:hover { border-color: #6b7280; background: #f9fafb; }
+    .type-btn input:checked + span { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
   </style>
 </head>
 <body class="min-h-screen bg-gray-100 p-4 md:p-8">
@@ -77,11 +84,31 @@
     </div>
 
     <!-- Action -->
-    <div id="actionSection" class="hidden space-y-2">
-      <button id="processBtn" onclick="processLabel()"
+    <div id="actionSection" class="hidden space-y-3">
+
+      <!-- Pages list -->
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <p class="text-sm font-semibold text-gray-700">Label Pages</p>
+          <p id="pagesCount" class="text-xs text-gray-400"></p>
+        </div>
+        <!-- Bulk-set row -->
+        <div id="pagesBulk" class="hidden px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center flex-wrap gap-2">
+          <span class="text-xs text-gray-500 shrink-0">Set all:</span>
+          <button onclick="setAllTypes('DOUBLE')"              class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Double</button>
+          <button onclick="setAllTypes('SUBSCRIPTION')"        class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Subscription</button>
+          <button onclick="setAllTypes('SINGLE')"              class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Single</button>
+          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Single Sub</button>
+        </div>
+        <p id="pagesLoading" class="p-4 text-center text-sm text-gray-400">Rendering pages…</p>
+        <div id="pagesList" class="divide-y divide-gray-100"></div>
+      </div>
+
+      <button id="exportBtn" onclick="exportPrintFile()"
         class="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-        Process &amp; Download
+        Export Print File
       </button>
+
       <p id="statusMsg" class="hidden text-center text-sm font-medium"></p>
     </div>
 
@@ -105,6 +132,7 @@ const S = {
   // Raw file bytes — stored as Uint8Array so they are NEVER transferred/detached.
   // (ArrayBuffer.prototype.slice is what detaches; Uint8Array copies safely.)
   pdfBytes:   null,   // Uint8Array
+  pdfName:    '',
   logoBytes:  null,   // Uint8Array
   logoType:   'png',
 
@@ -125,6 +153,7 @@ const S = {
   crop: { x: 0, y: 0, w: 0, h: 0 },
 
   drag: null,
+  pages: [],  // [{type, thumb}] — one entry per PDF page
 };
 
 const canvas = document.getElementById('editor');
@@ -360,6 +389,7 @@ setupDropZone('pdfZone', 'pdfInput', async (file) => {
 
   // Store as Uint8Array — safe to read multiple times without detaching.
   S.pdfBytes = new Uint8Array(await file.arrayBuffer());
+  S.pdfName  = file.name;
 
   document.getElementById('pdfZoneText').classList.add('hidden');
   const n = document.getElementById('pdfZoneName');
@@ -435,79 +465,218 @@ function checkReady() {
   const ready = S.pdfBitmap && S.logoImg.complete && S.logoImg.naturalWidth;
   document.getElementById('editorSection').classList.toggle('hidden', !ready);
   document.getElementById('actionSection').classList.toggle('hidden', !ready);
-  if (ready) render();
+  if (ready) { render(); buildPagesList(); }
 }
 
-// ── PDF processing & download ─────────────────────────────────────────────────
-async function processLabel() {
-  const btn = document.getElementById('processBtn');
+// ── Pages list ────────────────────────────────────────────────────────────────
+const DIVIDER_TEXT = {
+  DOUBLE:              '<- DOUBLES',
+  SUBSCRIPTION:        '<- SUBSCRIPTIONS',
+  SINGLE:              '<- SINGLES',
+  SINGLE_SUBSCRIPTION: '<- SINGLE SUBSCRIPTIONS',
+};
+
+const TYPE_LABELS = {
+  DOUBLE:              'Double',
+  SUBSCRIPTION:        'Subscription',
+  SINGLE:              'Single',
+  SINGLE_SUBSCRIPTION: 'Single Subscription',
+};
+
+const SECTION_ORDER  = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION'];
+const PAGE_TYPE_OPTS = [
+  { value: 'DOUBLE',              label: 'Double' },
+  { value: 'SUBSCRIPTION',        label: 'Sub'    },
+  { value: 'SINGLE',              label: 'Single' },
+  { value: 'SINGLE_SUBSCRIPTION', label: 'S+Sub'  },
+];
+
+
+async function buildPagesList() {
+  S.pages = [];
+  const loadingEl = document.getElementById('pagesLoading');
+  const listEl    = document.getElementById('pagesList');
+  const bulkEl    = document.getElementById('pagesBulk');
+  const countEl   = document.getElementById('pagesCount');
+
+  loadingEl.textContent = 'Rendering pages…';
+  loadingEl.classList.remove('hidden');
+  listEl.innerHTML = '';
+  bulkEl.classList.add('hidden');
+
+  const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
+  const count  = pdfDoc.numPages;
+  countEl.textContent = `${count} page${count !== 1 ? 's' : ''}`;
+
+  // Pre-fill array so indices are available immediately
+  for (let i = 0; i < count; i++) S.pages.push({ type: 'DOUBLE', thumb: null });
+
+  // Address region as fractions of the crop box (right column, NZ Post label layout)
+  const AX = 0.52, AY = 0.18, AW = 0.35, AH = 0.48;
+  const THUMB_W = 220;
+
+  for (let i = 1; i <= count; i++) {
+    if (i > 1) loadingEl.textContent = `Rendering page ${i} of ${count}…`;
+    const page = await pdfDoc.getPage(i);
+    const raw  = page.getViewport({ scale: 1 });
+
+    // Render at enough resolution to read the address text clearly
+    const rScale = Math.min(1.2, 700 / raw.width);
+    const vp     = page.getViewport({ scale: rScale });
+    const full   = document.createElement('canvas');
+    full.width   = Math.round(vp.width);
+    full.height  = Math.round(vp.height);
+    await page.render({ canvasContext: full.getContext('2d'), viewport: vp }).promise;
+
+    // Map S.crop (editor canvas px) → full canvas px
+    const f  = rScale / S.scale;
+    const cX = S.crop.x * f,  cY = S.crop.y * f;
+    const cW = S.crop.w * f,  cH = S.crop.h * f;
+
+    // Extract address region
+    const srcX = cX + cW * AX,  srcW = cW * AW;
+    const srcY = cY + cH * AY,  srcH = cH * AH;
+
+    const off   = document.createElement('canvas');
+    off.width   = THUMB_W;
+    off.height  = Math.round(THUMB_W * srcH / srcW);
+    off.getContext('2d').drawImage(full, srcX, srcY, srcW, srcH, 0, 0, off.width, off.height);
+
+    S.pages[i - 1].thumb = off;
+    addPageRow(i - 1);
+  }
+
+  loadingEl.classList.add('hidden');
+  bulkEl.classList.remove('hidden');
+}
+
+function addPageRow(i) {
+  const listEl = document.getElementById('pagesList');
+  const page   = S.pages[i];
+  const row    = document.createElement('div');
+  row.className = 'flex items-center gap-3 px-4 py-2';
+
+  // Thumbnail
+  const wrap = document.createElement('div');
+  wrap.className = 'shrink-0 rounded overflow-hidden border border-gray-200 bg-white';
+  const tc = document.createElement('canvas');
+  tc.width  = page.thumb.width;
+  tc.height = page.thumb.height;
+  tc.getContext('2d').drawImage(page.thumb, 0, 0);
+  wrap.appendChild(tc);
+  row.appendChild(wrap);
+
+  // Page number
+  const numEl = document.createElement('span');
+  numEl.className = 'text-xs font-semibold text-gray-400 w-6 shrink-0 text-right';
+  numEl.textContent = i + 1;
+  row.appendChild(numEl);
+
+  // Type pills
+  const pills = document.createElement('div');
+  pills.className = 'flex flex-wrap gap-1.5';
+  PAGE_TYPE_OPTS.forEach(opt => {
+    const label = document.createElement('label');
+    label.className = 'type-btn';
+    const inp = document.createElement('input');
+    inp.type  = 'radio';
+    inp.name  = `pt_${i}`;
+    inp.value = opt.value;
+    inp.className = 'sr-only';
+    inp.checked   = page.type === opt.value;
+    inp.addEventListener('change', () => { S.pages[i].type = opt.value; });
+    const span = document.createElement('span');
+    span.textContent = opt.label;
+    label.appendChild(inp);
+    label.appendChild(span);
+    pills.appendChild(label);
+  });
+
+  row.appendChild(pills);
+  listEl.appendChild(row);
+}
+
+function setAllTypes(type) {
+  S.pages.forEach((p, i) => {
+    p.type = type;
+    const inp = document.querySelector(`input[name="pt_${i}"][value="${type}"]`);
+    if (inp) inp.checked = true;
+  });
+}
+
+// ── Export print file ─────────────────────────────────────────────────────────
+async function exportPrintFile() {
+  const btn = document.getElementById('exportBtn');
   btn.disabled = true;
-  showStatus('Processing…', 'info');
+  showStatus('Building print file…', 'info');
 
   try {
-    // ── Coordinate conversion helpers ──────────────────────────────────────
-    // Canvas: origin top-left,    y increases downward
-    // PDF:    origin bottom-left, y increases upward
+    // Coordinate helpers — global crop/logo settings apply to all pages
     const toPdfX = (px) => px / S.scale;
-    const toPdfY = (py) => S.pdfPageH - py / S.scale;  // flip axis
+    const toPdfY = (py) => S.pdfPageH - py / S.scale;
 
-    // Crop region in PDF points (bottom-left origin)
     const cropLeft   = toPdfX(S.crop.x);
-    const cropBottom = toPdfY(S.crop.y + S.crop.h);    // canvas bottom → PDF bottom
+    const cropBottom = toPdfY(S.crop.y + S.crop.h);
     const cropW      = toPdfX(S.crop.w);
-    const cropH      = toPdfX(S.crop.h);               // height is a scalar, not a flipped coord
+    const cropH      = toPdfX(S.crop.h);
 
-    // ── Logo in new-page coordinate space ──────────────────────────────────
-    const lr   = getLogoRect();   // canvas px
+    const lr    = getLogoRect();
     const logoX = toPdfX(lr.x) - cropLeft;
     const logoY = toPdfY(lr.y + lr.h) - cropBottom;
     const logoW = toPdfX(lr.w);
     const logoH = toPdfX(lr.h);
 
-    // ── Load original PDF and create output PDF ────────────────────────────
     const origPdf   = await PDFLib.PDFDocument.load(S.pdfBytes.slice());
-    const newPdf    = await PDFLib.PDFDocument.create();
     const origPages = origPdf.getPages();
-    const pageCount = origPages.length;
-
-    // Embed the logo image once — reused across all pages
+    const newPdf    = await PDFLib.PDFDocument.create();
+    const divFont   = await newPdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
     const logoEmbed = S.logoType === 'png'
       ? await newPdf.embedPng(S.logoBytes.slice())
       : await newPdf.embedJpg(S.logoBytes.slice());
 
-    // ── Process every page ─────────────────────────────────────────────────
-    for (let i = 0; i < pageCount; i++) {
-      showStatus(`Processing page ${i + 1} of ${pageCount}…`, 'info');
+    let totalProcessed = 0;
 
-      // Embed this source page into the output document
-      const [embedded] = await newPdf.embedPages([origPages[i]]);
+    for (const type of SECTION_ORDER) {
+      const indices = S.pages
+        .map((p, i) => ({ type: p.type, i }))
+        .filter(p => p.type === type)
+        .map(p => p.i);
 
-      // New page physically sized to the crop rectangle
-      const newPage = newPdf.addPage([cropW, cropH]);
+      if (indices.length === 0) continue;
 
-      // Shift original content so crop region maps to (0, 0)
-      // Uses page-1 dimensions for scale (labels are always uniform size)
-      newPage.drawPage(embedded, {
-        x:      -cropLeft,
-        y:      -cropBottom,
-        width:   S.pdfPageW,
-        height:  S.pdfPageH,
+      // Divider page — same crop dimensions as labels
+      const divText  = DIVIDER_TEXT[type];
+      const divSize  = Math.min(cropW / 7, 48);
+      const divTextW = divFont.widthOfTextAtSize(divText, divSize);
+      const divPage  = newPdf.addPage([cropW, cropH]);
+      divPage.drawText(divText, {
+        x:     (cropW - divTextW) / 2,
+        y:     (cropH - divSize)  / 2,
+        font:  divFont,
+        size:  divSize,
+        color: PDFLib.rgb(0, 0, 0),
       });
 
-      // White rectangle to cover return address, then logo on top
-      newPage.drawRectangle({ x: logoX, y: logoY, width: logoW, height: logoH, color: PDFLib.rgb(1, 1, 1) });
-      newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
+      // Label pages — preserve original order within each section
+      for (const idx of indices) {
+        totalProcessed++;
+        showStatus(`Processing label ${totalProcessed} of ${S.pages.length}…`, 'info');
+        const [embedded] = await newPdf.embedPages([origPages[idx]]);
+        const newPage    = newPdf.addPage([cropW, cropH]);
+        newPage.drawPage(embedded, { x: -cropLeft, y: -cropBottom, width: S.pdfPageW, height: S.pdfPageH });
+        newPage.drawRectangle({ x: logoX, y: logoY, width: logoW, height: logoH, color: PDFLib.rgb(1, 1, 1) });
+        newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
+      }
     }
 
-    // ── Download ───────────────────────────────────────────────────────────
     const bytes = await newPdf.save();
     const blob  = new Blob([bytes], { type: 'application/pdf' });
     const url   = URL.createObjectURL(blob);
     const a     = document.createElement('a');
-    a.href = url; a.download = 'labels-modified.pdf'; a.click();
+    a.href = url; a.download = 'print-file.pdf'; a.click();
     URL.revokeObjectURL(url);
 
-    showStatus(`Done! ${pageCount} page${pageCount !== 1 ? 's' : ''} downloaded.`, 'success');
+    showStatus(`Done! ${totalProcessed} labels in print-file.pdf.`, 'success');
   } catch (err) {
     console.error(err);
     showStatus('Error: ' + err.message, 'error');
