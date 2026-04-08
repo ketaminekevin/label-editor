@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --accent: #2563EB;
+  --accent-dark: #1d4ed8;
+  --accent-light: #eff6ff;
+  --cream: #f9fafb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  background: var(--cream);
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Mapbox overrides */
+.mapboxgl-map { font-family: inherit !important; }
+.mapboxgl-ctrl-attrib { font-size: 10px; }
+.mapboxgl-popup-content {
+  border-radius: 12px;
+  padding: 0;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.22), 0 2px 8px rgba(0,0,0,0.10);
+  overflow: hidden;
+}
+.mapboxgl-popup-tip { display: none; }
+
+/* Pin pulse animation for selected marker */
+@keyframes pin-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.45), 0 2px 8px rgba(37,99,235,0.4); }
+  60% { box-shadow: 0 0 0 8px rgba(37,99,235,0), 0 2px 8px rgba(37,99,235,0.4); }
+}
+
+/* Blue dots loading animation */
+@keyframes dot-bounce {
+  from { transform: translateY(0); opacity: 0.5; }
+  to   { transform: translateY(-7px); opacity: 1; }
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Global scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 99px; }
