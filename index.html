@@ -4,115 +4,179 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Label Overlay Tool</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
+    * { font-family: 'Inter', system-ui, sans-serif; }
+    body { background: #f0efe9; }
+
     .drop-zone { transition: background-color 0.15s, border-color 0.15s; }
     .drop-zone.dragover { background-color: #eff6ff; border-color: #3b82f6; }
     .drop-zone.has-file  { background-color: #f0fdf4; border-color: #22c55e; }
+
     #editor { display: block; touch-action: none; }
+
+    /* Type pill radio buttons */
     .type-btn span {
-      display: block; padding: 6px 16px; border: 1.5px solid #d1d5db; border-radius: 8px;
-      font-size: 13px; font-weight: 500; cursor: pointer; color: #374151;
-      transition: all 0.15s; user-select: none; white-space: nowrap;
+      display: block;
+      padding: 3px 9px;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #9ca3af;
+      transition: all 0.12s;
+      user-select: none;
+      white-space: nowrap;
+      letter-spacing: 0.02em;
     }
-    .type-btn span:hover { border-color: #6b7280; background: #f9fafb; }
-    .type-btn input:checked + span { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+    .type-btn span:hover { border-color: #9ca3af; color: #374151; }
+
+    /* Per-type checked colors */
+    .type-btn[data-type="DOUBLE"] input:checked + span            { background: #4ade80; color: #14532d; border-color: #4ade80; }
+    .type-btn[data-type="SUBSCRIPTION"] input:checked + span      { background: #16a34a; color: #fff;    border-color: #16a34a; }
+    .type-btn[data-type="SINGLE"] input:checked + span            { background: #93c5fd; color: #1e3a8a; border-color: #93c5fd; }
+    .type-btn[data-type="SINGLE_SUBSCRIPTION"] input:checked + span { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .type-btn[data-type="THREE"] input:checked + span             { background: #f472b6; color: #831843; border-color: #f472b6; }
+    .type-btn[data-type="FOUR"] input:checked + span              { background: #c084fc; color: #3b0764; border-color: #c084fc; }
+    .type-btn[data-type="CUSTOM"] input:checked + span            { background: #7c3aed; color: #fff;    border-color: #7c3aed; }
+
+    /* Bulk-set buttons */
+    .bulk-btn {
+      font-size: 11px; font-weight: 600;
+      padding: 3px 10px;
+      border: 1.5px solid #e5e7eb; border-radius: 5px;
+      color: #9ca3af; background: white;
+      cursor: pointer; transition: all 0.12s;
+      letter-spacing: 0.02em;
+    }
+    .bulk-btn:hover { border-color: #9ca3af; color: #374151; }
+
+    /* Extracted address text */
+    .addr-lines { font-size: 12px; line-height: 1.55; color: #374151; min-width: 0; }
+    .addr-lines .line-name { font-weight: 700; color: #111827; }
+    .addr-lines .line-addr { color: #6b7280; }
+
+    /* Custom text input inside row */
+    .custom-input {
+      font-size: 11px; font-weight: 500;
+      padding: 3px 8px;
+      border: 1.5px solid #ddd6fe; border-radius: 5px;
+      color: #6d28d9; background: #faf5ff;
+      outline: none; width: 110px;
+      transition: border-color 0.12s;
+    }
+    .custom-input:focus { border-color: #7c3aed; }
+    .custom-input::placeholder { color: #c4b5fd; }
+
+    /* Page row */
+    .page-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px; }
+    .page-row:hover { background: #fafaf8; }
+
   </style>
 </head>
-<body class="min-h-screen bg-gray-100 p-4 md:p-8">
-  <div class="max-w-3xl mx-auto space-y-5">
+<body class="min-h-screen p-4 md:p-8">
+  <div class="max-w-4xl mx-auto space-y-5">
 
     <!-- Header -->
-    <div class="text-center pt-2">
-      <h1 class="text-2xl font-bold text-gray-800">Label Overlay Tool</h1>
-      <p class="text-gray-500 text-sm mt-1">Upload a shipping label PDF, crop it, position your logo, and download.</p>
+    <div class="text-center pt-4 pb-1">
+      <h1 class="text-3xl font-bold text-gray-900 tracking-tight">Label Overlay</h1>
+      <p class="text-gray-500 text-sm mt-1.5">Upload a shipping label PDF, position your logo, and export a sorted print file.</p>
     </div>
 
     <!-- Upload Row -->
     <div class="grid grid-cols-2 gap-4">
       <div>
-        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Shipping Label (PDF)</p>
+        <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Shipping Label PDF</p>
         <div id="pdfZone"
-          class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+          class="drop-zone border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 bg-white"
           onclick="document.getElementById('pdfInput').click()">
           <input type="file" id="pdfInput" accept=".pdf,application/pdf" class="hidden" />
           <div id="pdfZoneText">
-            <svg class="mx-auto mb-1 w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="mx-auto mb-2 w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                 d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
-            <p class="text-xs text-gray-500">Drop PDF or <span class="text-blue-600">browse</span></p>
+            <p class="text-sm text-gray-400">Drop PDF or <span class="text-blue-500 font-semibold">browse</span></p>
           </div>
-          <p id="pdfZoneName" class="hidden text-xs text-green-700 font-medium"></p>
+          <p id="pdfZoneName" class="hidden text-sm text-green-600 font-semibold"></p>
         </div>
       </div>
 
       <div>
-        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Logo Image (PNG or JPG)</p>
+        <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Logo (PNG or JPG)</p>
         <div id="logoZone"
-          class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+          class="drop-zone border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 bg-white"
           onclick="document.getElementById('logoInput').click()">
           <input type="file" id="logoInput" accept="image/png,image/jpeg" class="hidden" />
           <div id="logoZoneText">
-            <svg class="mx-auto mb-1 w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="mx-auto mb-2 w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                 d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
-            <p class="text-xs text-gray-500">Drop logo or <span class="text-blue-600">browse</span></p>
+            <p class="text-sm text-gray-400">Drop logo or <span class="text-blue-500 font-semibold">browse</span></p>
           </div>
           <img id="logoThumb" class="hidden mx-auto max-h-10 rounded mt-1" alt="Logo preview" />
-          <p id="logoZoneName" class="hidden text-xs text-green-700 font-medium mt-1"></p>
+          <p id="logoZoneName" class="hidden text-sm text-green-600 font-semibold mt-1"></p>
         </div>
       </div>
     </div>
 
     <!-- Editor (shown after both files loaded) -->
-    <div id="editorSection" class="hidden bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+    <div id="editorSection" class="hidden bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-        <p class="text-sm font-semibold text-gray-700">Preview &amp; Editor</p>
-        <p class="text-xs text-gray-400">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 mr-1 align-middle"></span>Corners = crop &nbsp;
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-white border-2 border-gray-500 mr-1 align-middle"></span>Logo corner = resize &nbsp;
-          <span class="text-gray-500">Drag logo to move</span>
-        </p>
+        <p class="text-sm font-semibold text-gray-800">Preview &amp; Editor</p>
+        <div class="flex items-center gap-4 text-xs text-gray-400">
+          <span><span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1 align-middle"></span>Blue corners = crop</span>
+          <span><span class="inline-block w-2 h-2 rounded-full bg-white border-2 border-gray-400 mr-1 align-middle"></span>White corner = resize logo</span>
+          <span>Drag logo to move</span>
+        </div>
       </div>
-      <div class="p-4 flex justify-center bg-gray-50">
-        <canvas id="editor" class="rounded-lg border border-gray-200 shadow-sm"></canvas>
+      <div class="p-5 flex justify-center bg-gray-50">
+        <canvas id="editor" class="rounded-xl border border-gray-200 shadow-sm"></canvas>
       </div>
     </div>
 
-    <!-- Action -->
-    <div id="actionSection" class="hidden space-y-3">
+    <!-- Action Section -->
+    <div id="actionSection" class="hidden space-y-4">
 
       <!-- Pages list -->
-      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-          <p class="text-sm font-semibold text-gray-700">Label Pages</p>
-          <p id="pagesCount" class="text-xs text-gray-400"></p>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div class="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+          <p class="text-sm font-semibold text-gray-800">Label Pages</p>
+          <span id="pagesCount" class="text-xs font-semibold text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full"></span>
         </div>
+
         <!-- Bulk-set row -->
-        <div id="pagesBulk" class="hidden px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center flex-wrap gap-2">
-          <span class="text-xs text-gray-500 shrink-0">Set all:</span>
-          <button onclick="setAllTypes('DOUBLE')"              class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Double</button>
-          <button onclick="setAllTypes('SUBSCRIPTION')"        class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Subscription</button>
-          <button onclick="setAllTypes('SINGLE')"              class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Single</button>
-          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:border-gray-600 font-medium text-gray-600 transition-colors">Single Sub</button>
+        <div id="pagesBulk" class="hidden px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center flex-wrap gap-1.5">
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest shrink-0 mr-1">Set all:</span>
+          <button onclick="setAllTypes('DOUBLE')"              class="bulk-btn" style="color:#15803d;border-color:#bbf7d0;">Double</button>
+          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn" style="color:#fff;background:#16a34a;border-color:#16a34a;">D. Sub</button>
+          <button onclick="setAllTypes('SINGLE')"              class="bulk-btn" style="color:#1e40af;border-color:#bfdbfe;">Single</button>
+          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn" style="color:#fff;background:#2563eb;border-color:#2563eb;">S. Sub</button>
+          <button onclick="setAllTypes('THREE')"               class="bulk-btn" style="color:#831843;border-color:#fbcfe8;">Three</button>
+          <button onclick="setAllTypes('FOUR')"                class="bulk-btn" style="color:#3b0764;border-color:#e9d5ff;">Four</button>
+          <button onclick="setAllTypes('CUSTOM')"              class="bulk-btn" style="color:#7c3aed;border-color:#ddd6fe;">Custom</button>
         </div>
-        <p id="pagesLoading" class="p-4 text-center text-sm text-gray-400">Rendering pages…</p>
-        <div id="pagesList" class="divide-y divide-gray-100"></div>
+
+        <p id="pagesLoading" class="p-5 text-center text-sm text-gray-400">Rendering pages…</p>
+        <div id="pagesList" class="divide-y divide-gray-50"></div>
       </div>
 
       <button id="exportBtn" onclick="exportPrintFile()"
-        class="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-2xl transition-colors text-sm tracking-wide shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
         Export Print File
       </button>
 
-      <p id="statusMsg" class="hidden text-center text-sm font-medium"></p>
+      <p id="statusMsg" class="hidden text-center text-sm font-medium pb-1"></p>
     </div>
 
-    <p class="text-center text-xs text-gray-400 pb-2">Files are processed in your browser — nothing is uploaded to any server.</p>
+    <p class="text-center text-xs text-gray-400 pb-4">Files are processed entirely in your browser — nothing is uploaded to any server.</p>
   </div>
 
 <script>
@@ -129,31 +193,25 @@ const LOGO_PAD = 8;   // default padding when initialising logo position
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const S = {
-  // Raw file bytes — stored as Uint8Array so they are NEVER transferred/detached.
-  // (ArrayBuffer.prototype.slice is what detaches; Uint8Array copies safely.)
   pdfBytes:   null,   // Uint8Array
   pdfName:    '',
   logoBytes:  null,   // Uint8Array
   logoType:   'png',
 
-  pdfPageW:   0,      // PDF page width  in points
-  pdfPageH:   0,      // PDF page height in points
-  scale:      1,      // canvas px per PDF point
+  pdfPageW:   0,
+  pdfPageH:   0,
+  scale:      1,
 
-  pdfBitmap:  null,   // offscreen <canvas> with the rendered PDF page
+  pdfBitmap:  null,
   logoImg:    new Image(),
-  logoAspect: 1,      // logo naturalWidth / naturalHeight
+  logoAspect: 1,
 
-  // Logo geometry in canvas px
-  logoX:  0,
-  logoY:  0,
-  logoW:  80,
-
-  // Crop rectangle in canvas px
+  logoX:  0, logoY:  0, logoW:  80,
   crop: { x: 0, y: 0, w: 0, h: 0 },
-
   drag: null,
-  pages: [],  // [{type, thumb}] — one entry per PDF page
+
+  // { type, thumb, addressLines, customText }
+  pages: [],
 };
 
 const canvas = document.getElementById('editor');
@@ -167,7 +225,6 @@ function getLogoRect() {
   return { x: S.logoX, y: S.logoY, w: S.logoW, h: S.logoW / S.logoAspect };
 }
 
-/** Four crop corners, each with its own position (cx,cy) and opposite/fixed corner (fx,fy). */
 function getCropCorners() {
   const { x, y, w, h } = S.crop;
   return [
@@ -178,7 +235,6 @@ function getCropCorners() {
   ];
 }
 
-/** Keep logo fully inside the crop box. */
 function constrainLogo() {
   const h = S.logoW / S.logoAspect;
   S.logoX = clamp(S.logoX, S.crop.x, S.crop.x + S.crop.w - S.logoW);
@@ -190,17 +246,14 @@ function render() {
   const { crop, logoImg } = S;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 1. PDF background
   if (S.pdfBitmap) ctx.drawImage(S.pdfBitmap, 0, 0);
 
-  // 2. Dark overlay outside crop (four rects surrounding it)
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0,              0,              canvas.width,                       crop.y);
+  ctx.fillRect(0,              0,               canvas.width,                      crop.y);
   ctx.fillRect(0,              crop.y + crop.h, canvas.width,                      canvas.height - crop.y - crop.h);
   ctx.fillRect(0,              crop.y,          crop.x,                            crop.h);
   ctx.fillRect(crop.x + crop.w, crop.y,         canvas.width - crop.x - crop.w,   crop.h);
 
-  // 3. Rule-of-thirds lines
   ctx.strokeStyle = 'rgba(255,255,255,0.2)';
   ctx.lineWidth = 1;
   for (let i = 1; i < 3; i++) {
@@ -210,36 +263,27 @@ function render() {
     line(crop.x, gy,  crop.x + crop.w, gy);
   }
 
-  // 4. Crop border
   ctx.strokeStyle = '#3b82f6';
   ctx.lineWidth = 2;
   ctx.strokeRect(crop.x + 1, crop.y + 1, crop.w - 2, crop.h - 2);
 
-  // 5. Crop corner handles (blue, white outline)
   for (const { cx, cy } of getCropCorners()) {
     handle(cx, cy, '#3b82f6', '#ffffff');
   }
 
-  // 6. Logo
   if (logoImg.complete && logoImg.naturalWidth) {
     const lr = getLogoRect();
-
-    // White backing to erase whatever is under the logo
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(lr.x, lr.y, lr.w, lr.h);
     ctx.drawImage(logoImg, lr.x, lr.y, lr.w, lr.h);
 
-    // Dashed border
     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 3]);
     ctx.strokeRect(lr.x - 1, lr.y - 1, lr.w + 2, lr.h + 2);
     ctx.setLineDash([]);
 
-    // Resize handle at bottom-right of logo (white, dark outline)
     handle(lr.x + lr.w, lr.y + lr.h, '#ffffff', '#374151');
-
-    // Small icon inside resize handle
     ctx.fillStyle = '#374151';
     ctx.font = 'bold 9px sans-serif';
     ctx.textAlign = 'center';
@@ -262,27 +306,15 @@ function handle(x, y, fill, stroke) {
 function hitTest(mx, my) {
   if (S.logoImg.complete && S.logoImg.naturalWidth) {
     const lr = getLogoRect();
-
-    // Logo resize handle (BR corner) — checked before body so small logos still work
-    if (dist(mx, my, lr.x + lr.w, lr.y + lr.h) <= HR + 3)
-      return { type: 'logo-resize' };
-
-    // Logo body → move
+    if (dist(mx, my, lr.x + lr.w, lr.y + lr.h) <= HR + 3) return { type: 'logo-resize' };
     if (mx >= lr.x && mx <= lr.x + lr.w && my >= lr.y && my <= lr.y + lr.h)
       return { type: 'logo-move', offX: mx - S.logoX, offY: my - S.logoY };
   }
-
-  // Crop corner handles
   for (const c of getCropCorners()) {
-    if (dist(mx, my, c.cx, c.cy) <= HR + 3)
-      return { type: 'crop-corner', fx: c.fx, fy: c.fy };
+    if (dist(mx, my, c.cx, c.cy) <= HR + 3) return { type: 'crop-corner', fx: c.fx, fy: c.fy };
   }
-
-  // Inside crop box → move the crop
-  if (mx > S.crop.x && mx < S.crop.x + S.crop.w &&
-      my > S.crop.y && my < S.crop.y + S.crop.h)
+  if (mx > S.crop.x && mx < S.crop.x + S.crop.w && my > S.crop.y && my < S.crop.y + S.crop.h)
     return { type: 'crop-move', startX: mx, startY: my, origCrop: { ...S.crop } };
-
   return null;
 }
 
@@ -301,7 +333,6 @@ function applyDrag(mx, my) {
   if (!d) return;
 
   if (d.type === 'crop-corner') {
-    // Fixed corner stays at (fx,fy); drag corner follows mouse.
     const x1 = Math.min(mx, d.fx), x2 = Math.max(mx, d.fx);
     const y1 = Math.min(my, d.fy), y2 = Math.max(my, d.fy);
     S.crop.x = clamp(x1, 0, canvas.width  - MIN_CROP);
@@ -310,22 +341,18 @@ function applyDrag(mx, my) {
     S.crop.h = clamp(y2 - S.crop.y, MIN_CROP, canvas.height - S.crop.y);
     constrainLogo();
   }
-
   if (d.type === 'crop-move') {
     const dx = mx - d.startX, dy = my - d.startY;
     S.crop.x = clamp(d.origCrop.x + dx, 0, canvas.width  - S.crop.w);
     S.crop.y = clamp(d.origCrop.y + dy, 0, canvas.height - S.crop.h);
     constrainLogo();
   }
-
   if (d.type === 'logo-move') {
     const logoH = S.logoW / S.logoAspect;
     S.logoX = clamp(mx - d.offX, S.crop.x, S.crop.x + S.crop.w - S.logoW);
     S.logoY = clamp(my - d.offY, S.crop.y, S.crop.y + S.crop.h - logoH);
   }
-
   if (d.type === 'logo-resize') {
-    // Top-left of logo is fixed at (S.logoX, S.logoY); BR corner follows mouse.
     const maxWByX = S.crop.x + S.crop.w - S.logoX;
     const maxWByY = (S.crop.y + S.crop.h - S.logoY) * S.logoAspect;
     S.logoW = clamp(mx - S.logoX, MIN_LOGO, Math.min(maxWByX, maxWByY));
@@ -334,37 +361,28 @@ function applyDrag(mx, my) {
 
 // ── Pointer events ────────────────────────────────────────────────────────────
 function getPos(e) {
-  const rect  = canvas.getBoundingClientRect();
-  const sX    = canvas.width  / rect.width;
-  const sY    = canvas.height / rect.height;
-  const src   = e.touches ? e.touches[0] : e;
+  const rect = canvas.getBoundingClientRect();
+  const sX = canvas.width / rect.width, sY = canvas.height / rect.height;
+  const src = e.touches ? e.touches[0] : e;
   return { x: (src.clientX - rect.left) * sX, y: (src.clientY - rect.top) * sY };
 }
 
-canvas.addEventListener('mousedown', (e) => {
-  const p = getPos(e);
-  S.drag = hitTest(p.x, p.y);
-});
+canvas.addEventListener('mousedown', (e) => { S.drag = hitTest(...Object.values(getPos(e))); });
 canvas.addEventListener('mousemove', (e) => {
   const p = getPos(e);
   canvas.style.cursor = S.drag ? 'grabbing' : (cursorFor(p.x, p.y) || 'default');
   if (!S.drag) return;
-  applyDrag(p.x, p.y);
-  render();
+  applyDrag(p.x, p.y); render();
 });
 canvas.addEventListener('mouseup',    () => { S.drag = null; });
 canvas.addEventListener('mouseleave', () => { S.drag = null; });
 
 canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  S.drag = hitTest(...Object.values(getPos(e)));
+  e.preventDefault(); S.drag = hitTest(...Object.values(getPos(e)));
 }, { passive: false });
 canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  if (!S.drag) return;
-  const p = getPos(e);
-  applyDrag(p.x, p.y);
-  render();
+  e.preventDefault(); if (!S.drag) return;
+  const p = getPos(e); applyDrag(p.x, p.y); render();
 }, { passive: false });
 canvas.addEventListener('touchend', () => { S.drag = null; });
 
@@ -387,7 +405,6 @@ setupDropZone('pdfZone', 'pdfInput', async (file) => {
   if (!file.name.endsWith('.pdf') && file.type !== 'application/pdf')
     return showStatus('Please upload a PDF file.', 'error');
 
-  // Store as Uint8Array — safe to read multiple times without detaching.
   S.pdfBytes = new Uint8Array(await file.arrayBuffer());
   S.pdfName  = file.name;
 
@@ -424,9 +441,8 @@ setupDropZone('logoZone', 'logoInput', async (file) => {
   checkReady();
 });
 
-// ── PDF preview via PDF.js ────────────────────────────────────────────────────
+// ── PDF preview ───────────────────────────────────────────────────────────────
 async function renderPdfPreview() {
-  // Pass a copy so pdf.js worker transfer cannot detach S.pdfBytes.
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
   const page   = await pdfDoc.getPage(1);
   const rawVp  = page.getViewport({ scale: 1 });
@@ -446,14 +462,12 @@ async function renderPdfPreview() {
   await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
   S.pdfBitmap = off;
 
-  // Default crop = full page with small inset
   const inset = 10;
   S.crop = { x: inset, y: inset, w: canvas.width - 2 * inset, h: canvas.height - 2 * inset };
   initLogo();
   render();
 }
 
-/** Place logo at bottom-right of crop, 25% of crop width. */
 function initLogo() {
   S.logoW = clamp(Math.round(S.crop.w * 0.25), MIN_LOGO, S.crop.w - 2 * LOGO_PAD);
   const h = S.logoW / S.logoAspect;
@@ -468,30 +482,60 @@ function checkReady() {
   if (ready) { render(); buildPagesList(); }
 }
 
-// ── Pages list ────────────────────────────────────────────────────────────────
+// ── Type definitions ──────────────────────────────────────────────────────────
 const DIVIDER_TEXT = {
   DOUBLE:              '<- DOUBLES',
-  SUBSCRIPTION:        '<- SUBSCRIPTIONS',
+  SUBSCRIPTION:        '<- DOUBLE SUBSCRIPTIONS',
   SINGLE:              '<- SINGLES',
   SINGLE_SUBSCRIPTION: '<- SINGLE SUBSCRIPTIONS',
+  THREE:               '<- TRIPLES',
+  FOUR:                '<- QUADRUPLES',
+  CUSTOM:              '<- CUSTOM',
 };
 
-const TYPE_LABELS = {
-  DOUBLE:              'Double',
-  SUBSCRIPTION:        'Subscription',
-  SINGLE:              'Single',
-  SINGLE_SUBSCRIPTION: 'Single Subscription',
-};
+const SECTION_ORDER = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION', 'THREE', 'FOUR', 'CUSTOM'];
 
-const SECTION_ORDER  = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION'];
 const PAGE_TYPE_OPTS = [
-  { value: 'DOUBLE',              label: 'Double' },
-  { value: 'SUBSCRIPTION',        label: 'Sub'    },
-  { value: 'SINGLE',              label: 'Single' },
-  { value: 'SINGLE_SUBSCRIPTION', label: 'S+Sub'  },
+  { value: 'DOUBLE',              label: 'Double', custom: false },
+  { value: 'SUBSCRIPTION',        label: 'D. Sub', custom: false },
+  { value: 'SINGLE',              label: 'Single', custom: false },
+  { value: 'SINGLE_SUBSCRIPTION', label: 'S. Sub', custom: false },
+  { value: 'THREE',               label: 'Three',  custom: false },
+  { value: 'FOUR',                label: 'Four',   custom: false },
+  { value: 'CUSTOM',              label: 'Custom', custom: true  },
 ];
 
+// ── OCR-based text extraction ─────────────────────────────────────────────────
+/**
+ * Render the right half of the label crop to a high-res canvas and run
+ * Tesseract OCR on it. Returns an array of non-empty text lines.
+ */
+async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
+  // Right half of the crop — this is where the address lives on NZ Post labels
+  const srcX = cX + cW * 0.48;
+  const srcY = cY;
+  const srcW = cW * 0.52;
+  const srcH = cH;
 
+  // Scale up 2× for OCR accuracy
+  const scale = 2;
+  const ocrCanvas = document.createElement('canvas');
+  ocrCanvas.width  = Math.round(srcW * scale);
+  ocrCanvas.height = Math.round(srcH * scale);
+  ocrCanvas.getContext('2d').drawImage(
+    fullCanvas,
+    srcX, srcY, srcW, srcH,
+    0, 0, ocrCanvas.width, ocrCanvas.height
+  );
+
+  const { data: { text } } = await ocrWorker.recognize(ocrCanvas);
+  return text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 2);
+}
+
+// ── Pages list ────────────────────────────────────────────────────────────────
 async function buildPagesList() {
   S.pages = [];
   const loadingEl = document.getElementById('pagesLoading');
@@ -499,53 +543,62 @@ async function buildPagesList() {
   const bulkEl    = document.getElementById('pagesBulk');
   const countEl   = document.getElementById('pagesCount');
 
-  loadingEl.textContent = 'Rendering pages…';
+  loadingEl.textContent = 'Initialising OCR engine…';
   loadingEl.classList.remove('hidden');
   listEl.innerHTML = '';
   bulkEl.classList.add('hidden');
+
+  // Initialise one Tesseract worker for the whole batch
+  const ocrWorker = await Tesseract.createWorker('eng');
 
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
   const count  = pdfDoc.numPages;
   countEl.textContent = `${count} page${count !== 1 ? 's' : ''}`;
 
-  // Pre-fill array so indices are available immediately
-  for (let i = 0; i < count; i++) S.pages.push({ type: 'DOUBLE', thumb: null });
+  for (let i = 0; i < count; i++) {
+    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '' });
+  }
 
-  // Address region as fractions of the crop box (right column, NZ Post label layout)
-  const AX = 0.52, AY = 0.18, AW = 0.35, AH = 0.48;
-  const THUMB_W = 220;
+  const THUMB_W = 72;
+  // Render pages at a higher scale for better OCR quality
+  const OCR_SCALE = 2.5;
 
   for (let i = 1; i <= count; i++) {
-    if (i > 1) loadingEl.textContent = `Rendering page ${i} of ${count}…`;
+    loadingEl.textContent = `OCR ${i} of ${count}…`;
+
     const page = await pdfDoc.getPage(i);
     const raw  = page.getViewport({ scale: 1 });
 
-    // Render at enough resolution to read the address text clearly
-    const rScale = Math.min(1.2, 700 / raw.width);
-    const vp     = page.getViewport({ scale: rScale });
-    const full   = document.createElement('canvas');
-    full.width   = Math.round(vp.width);
-    full.height  = Math.round(vp.height);
+    // High-res render for OCR
+    const vp   = page.getViewport({ scale: OCR_SCALE });
+    const full = document.createElement('canvas');
+    full.width  = Math.round(vp.width);
+    full.height = Math.round(vp.height);
     await page.render({ canvasContext: full.getContext('2d'), viewport: vp }).promise;
 
-    // Map S.crop (editor canvas px) → full canvas px
-    const f  = rScale / S.scale;
-    const cX = S.crop.x * f,  cY = S.crop.y * f;
-    const cW = S.crop.w * f,  cH = S.crop.h * f;
+    // Map editor crop (canvas px) to this render's pixel space
+    const f  = OCR_SCALE / S.scale;
+    const cX = S.crop.x * f, cY = S.crop.y * f;
+    const cW = S.crop.w * f, cH = S.crop.h * f;
 
-    // Extract address region
-    const srcX = cX + cW * AX,  srcW = cW * AW;
-    const srcY = cY + cH * AY,  srcH = cH * AH;
+    // Thumbnail of the crop at display size
+    const thumbH = Math.round(THUMB_W * cH / cW);
+    const thumb  = document.createElement('canvas');
+    thumb.width  = THUMB_W; thumb.height = thumbH;
+    thumb.getContext('2d').drawImage(full, cX, cY, cW, cH, 0, 0, THUMB_W, thumbH);
+    S.pages[i - 1].thumb = thumb;
 
-    const off   = document.createElement('canvas');
-    off.width   = THUMB_W;
-    off.height  = Math.round(THUMB_W * srcH / srcW);
-    off.getContext('2d').drawImage(full, srcX, srcY, srcW, srcH, 0, 0, off.width, off.height);
+    // OCR the address region
+    try {
+      S.pages[i - 1].addressLines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
+    } catch (_) {
+      S.pages[i - 1].addressLines = [];
+    }
 
-    S.pages[i - 1].thumb = off;
     addPageRow(i - 1);
   }
 
+  await ocrWorker.terminate();
   loadingEl.classList.add('hidden');
   bulkEl.classList.remove('hidden');
 }
@@ -553,38 +606,68 @@ async function buildPagesList() {
 function addPageRow(i) {
   const listEl = document.getElementById('pagesList');
   const page   = S.pages[i];
-  const row    = document.createElement('div');
-  row.className = 'flex items-center gap-3 px-4 py-2';
 
-  // Thumbnail
-  const wrap = document.createElement('div');
-  wrap.className = 'shrink-0 rounded overflow-hidden border border-gray-200 bg-white';
+  const row = document.createElement('div');
+  row.className = 'page-row';
+  row.id = `row_${i}`;
+
+  // ── Page number badge ──────────────────────────────────────────────────────
+  const numEl = document.createElement('span');
+  numEl.className = 'text-xs font-bold text-gray-300 w-5 shrink-0 text-right pt-1';
+  numEl.textContent = i + 1;
+  row.appendChild(numEl);
+
+  // ── Thumbnail ──────────────────────────────────────────────────────────────
   const tc = document.createElement('canvas');
   tc.width  = page.thumb.width;
   tc.height = page.thumb.height;
   tc.getContext('2d').drawImage(page.thumb, 0, 0);
-  wrap.appendChild(tc);
-  row.appendChild(wrap);
+  tc.className = 'shrink-0 rounded border border-gray-200 shadow-sm';
+  tc.style.cssText = 'width:56px;height:auto;display:block;';
+  row.appendChild(tc);
 
-  // Page number
-  const numEl = document.createElement('span');
-  numEl.className = 'text-xs font-semibold text-gray-400 w-6 shrink-0 text-right';
-  numEl.textContent = i + 1;
-  row.appendChild(numEl);
+  // ── Address text (searchable) ──────────────────────────────────────────────
+  const addrBlock = document.createElement('div');
+  addrBlock.className = 'addr-lines flex-1 min-w-0 pt-0.5';
 
-  // Type pills
+  const displayLines = page.addressLines.slice(1, 3); // line 2 = name, line 3 = street
+  if (displayLines.length) {
+    displayLines.forEach((line, li) => {
+      const el = document.createElement('div');
+      el.className = li === 0 ? 'line-name' : 'line-addr';
+      el.textContent = line;
+      addrBlock.appendChild(el);
+    });
+  } else {
+    const el = document.createElement('div');
+    el.className = 'line-addr italic';
+    el.textContent = 'No text extracted';
+    addrBlock.appendChild(el);
+  }
+
+  row.appendChild(addrBlock);
+
+  // ── Type pills ─────────────────────────────────────────────────────────────
+  const pillsWrap = document.createElement('div');
+  pillsWrap.className = 'shrink-0 flex flex-col gap-1 items-end';
+
   const pills = document.createElement('div');
-  pills.className = 'flex flex-wrap gap-1.5';
+  pills.className = 'flex flex-wrap gap-1 justify-end';
+
   PAGE_TYPE_OPTS.forEach(opt => {
     const label = document.createElement('label');
     label.className = 'type-btn';
+    label.dataset.type = opt.value;
     const inp = document.createElement('input');
     inp.type  = 'radio';
     inp.name  = `pt_${i}`;
     inp.value = opt.value;
     inp.className = 'sr-only';
     inp.checked   = page.type === opt.value;
-    inp.addEventListener('change', () => { S.pages[i].type = opt.value; });
+    inp.addEventListener('change', () => {
+      S.pages[i].type = opt.value;
+      updateCustomInput(i);
+    });
     const span = document.createElement('span');
     span.textContent = opt.label;
     label.appendChild(inp);
@@ -592,8 +675,30 @@ function addPageRow(i) {
     pills.appendChild(label);
   });
 
-  row.appendChild(pills);
+  pillsWrap.appendChild(pills);
+
+  // Custom text input (shown when CUSTOM is selected)
+  const customWrap = document.createElement('div');
+  customWrap.id = `custom_wrap_${i}`;
+  customWrap.className = 'mt-1';
+  customWrap.style.display = page.type === 'CUSTOM' ? 'block' : 'none';
+
+  const customInp = document.createElement('input');
+  customInp.type        = 'text';
+  customInp.className   = 'custom-input';
+  customInp.placeholder = 'Section name…';
+  customInp.value       = page.customText || '';
+  customInp.addEventListener('input', (e) => { S.pages[i].customText = e.target.value; });
+  customWrap.appendChild(customInp);
+  pillsWrap.appendChild(customWrap);
+
+  row.appendChild(pillsWrap);
   listEl.appendChild(row);
+}
+
+function updateCustomInput(i) {
+  const wrap = document.getElementById(`custom_wrap_${i}`);
+  if (wrap) wrap.style.display = S.pages[i].type === 'CUSTOM' ? 'block' : 'none';
 }
 
 function setAllTypes(type) {
@@ -601,6 +706,7 @@ function setAllTypes(type) {
     p.type = type;
     const inp = document.querySelector(`input[name="pt_${i}"][value="${type}"]`);
     if (inp) inp.checked = true;
+    updateCustomInput(i);
   });
 }
 
@@ -611,7 +717,6 @@ async function exportPrintFile() {
   showStatus('Building print file…', 'info');
 
   try {
-    // Coordinate helpers — global crop/logo settings apply to all pages
     const toPdfX = (px) => px / S.scale;
     const toPdfY = (py) => S.pdfPageH - py / S.scale;
 
@@ -644,20 +749,21 @@ async function exportPrintFile() {
 
       if (indices.length === 0) continue;
 
-      // Divider page — same crop dimensions as labels
-      const divText  = DIVIDER_TEXT[type];
+      // Divider text: for CUSTOM, use first page's custom text if set
+      let divText = DIVIDER_TEXT[type];
+      if (type === 'CUSTOM') {
+        const firstCustom = S.pages[indices[0]];
+        if (firstCustom.customText.trim()) divText = '<- ' + firstCustom.customText.trim().toUpperCase();
+      }
+
       const divSize  = Math.min(cropW / 7, 48);
       const divTextW = divFont.widthOfTextAtSize(divText, divSize);
       const divPage  = newPdf.addPage([cropW, cropH]);
       divPage.drawText(divText, {
-        x:     (cropW - divTextW) / 2,
-        y:     (cropH - divSize)  / 2,
-        font:  divFont,
-        size:  divSize,
-        color: PDFLib.rgb(0, 0, 0),
+        x: (cropW - divTextW) / 2, y: (cropH - divSize) / 2,
+        font: divFont, size: divSize, color: PDFLib.rgb(0, 0, 0),
       });
 
-      // Label pages — preserve original order within each section
       for (const idx of indices) {
         totalProcessed++;
         showStatus(`Processing label ${totalProcessed} of ${S.pages.length}…`, 'info');
@@ -676,7 +782,7 @@ async function exportPrintFile() {
     a.href = url; a.download = 'print-file.pdf'; a.click();
     URL.revokeObjectURL(url);
 
-    showStatus(`Done! ${totalProcessed} labels in print-file.pdf.`, 'success');
+    showStatus(`Done! ${totalProcessed} labels exported to print-file.pdf.`, 'success');
   } catch (err) {
     console.error(err);
     showStatus('Error: ' + err.message, 'error');
@@ -690,8 +796,8 @@ function showStatus(msg, type) {
   const el = document.getElementById('statusMsg');
   el.textContent = msg;
   el.className = 'text-center text-sm font-medium ' + (
-    type === 'error'   ? 'text-red-600'   :
-    type === 'success' ? 'text-green-600' : 'text-blue-600'
+    type === 'error'   ? 'text-red-500'   :
+    type === 'success' ? 'text-green-600' : 'text-blue-500'
   );
   el.classList.remove('hidden');
 }
