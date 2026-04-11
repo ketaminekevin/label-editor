@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
-import { User, LogOut, Plus, List, Sparkles } from 'lucide-react';
+import { User, LogOut, Plus, List, Sparkles, Camera } from 'lucide-react';
 import { useState } from 'react';
 import clsx from 'clsx';
 
@@ -36,11 +36,19 @@ export function Navbar() {
             </Link>
 
             <Link
+              href="/menu-scan"
+              className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+            >
+              <Camera size={14} />
+              Scan Menu
+            </Link>
+
+            <Link
               href="/scan"
-              className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
             >
               <Sparkles size={14} />
-              Plan Trip
+              Smart Search
             </Link>
 
             <div className="relative">

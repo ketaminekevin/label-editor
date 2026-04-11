@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
   }
 
-  const hash = hashPassword(password);
+  const hash = await hashPassword(password);
   const rows = await query<{ id: string }>(
     `INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
     [name, email, hash]

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { List } from '@/lib/types';
-import { Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 const LIST_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899'];
@@ -69,14 +69,14 @@ export default function ListsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fafaf7]">
+    <div className="min-h-screen bg-gray-50">
       <Navbar />
       <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-slate-900">My Lists</h1>
+          <h1 className="text-xl font-bold text-gray-900">My Lists</h1>
           <button
             onClick={() => setShowForm(v => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-sm font-semibold rounded-lg hover:bg-violet-700 transition-colors"
           >
             <Plus size={14} />
             New List
@@ -86,14 +86,14 @@ export default function ListsPage() {
         {/* New list form */}
         {showForm && (
           <div className="bg-white rounded-xl border border-slate-100 p-4 space-y-3">
-            <h2 className="font-semibold text-slate-800 text-sm">Create a new list</h2>
+            <h2 className="font-semibold text-gray-800 text-sm">Create a new list</h2>
             <input
               type="text"
               value={newName}
               onChange={e => setNewName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && createList()}
               placeholder="List name…"
-              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-300"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-300"
               autoFocus
             />
             <div>
@@ -113,11 +113,11 @@ export default function ListsPage() {
               <button
                 onClick={createList}
                 disabled={!newName.trim()}
-                className="px-4 py-2 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50"
+                className="px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50"
               >
                 Create
               </button>
-              <button onClick={() => { setShowForm(false); setNewName(''); }} className="px-4 py-2 text-sm text-slate-500 hover:text-slate-700">
+              <button onClick={() => { setShowForm(false); setNewName(''); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">
                 Cancel
               </button>
             </div>
@@ -129,22 +129,22 @@ export default function ListsPage() {
             {[1,2,3].map(i => <div key={i} className="h-16 bg-white rounded-xl animate-pulse" />)}
           </div>
         ) : lists.length === 0 ? (
-          <div className="text-center py-16 text-slate-400">
+          <div className="text-center py-16 text-gray-400">
             <div className="text-4xl mb-3">📋</div>
-            <p className="font-medium text-slate-600">No lists yet</p>
+            <p className="font-medium text-gray-600">No lists yet</p>
             <p className="text-sm mt-1">Create a list to organise your favourite restaurants</p>
           </div>
         ) : (
           <div className="space-y-2">
             {lists.map(list => (
-              <div key={list.id} className="bg-white rounded-xl border border-slate-100 p-4">
+              <div key={list.id} className={clsx('bg-white rounded-xl border p-4', list.scan_id ? 'border-violet-200 bg-violet-50/30' : 'border-slate-100')}>
                 {editingId === list.id ? (
                   <div className="space-y-2.5">
                     <input
                       type="text"
                       value={editName}
                       onChange={e => setEditName(e.target.value)}
-                      className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-300"
                       autoFocus
                     />
                     <div className="flex gap-1.5 flex-wrap">
@@ -158,31 +158,46 @@ export default function ListsPage() {
                       ))}
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => saveEdit(list.id)} className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700">
+                      <button onClick={() => saveEdit(list.id)} className="px-3 py-1.5 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700">
                         <Check size={12} />
                       </button>
-                      <button onClick={() => setEditingId(null)} className="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs font-semibold rounded-lg hover:bg-slate-200">
+                      <button onClick={() => setEditingId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded-lg hover:bg-gray-200">
                         <X size={12} />
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3">
-                    <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ background: list.color }} />
-                    <Link href={`/lists/${list.id}`} className="flex-1 min-w-0 group-hover:text-blue-600 transition-colors">
-                      <p className="font-semibold text-gray-800 hover:text-blue-600">{list.name}</p>
+                    {list.scan_id
+                      ? <Sparkles size={16} className="text-violet-500 flex-shrink-0" />
+                      : <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ background: list.color }} />
+                    }
+                    <Link
+                      href={list.scan_id ? `/scan/${list.scan_id}` : `/lists/${list.id}`}
+                      className="flex-1 min-w-0 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className={clsx('font-semibold', list.scan_id ? 'text-violet-700 hover:text-violet-900' : 'text-gray-800 hover:text-blue-600')}>{list.name}</p>
+                        {list.scan_id && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-violet-200 font-medium">
+                            Smart Search
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400">{list.restaurant_count ?? 0} restaurant{(list.restaurant_count ?? 0) !== 1 ? 's' : ''}</p>
                     </Link>
                     <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => startEdit(list)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
-                      >
-                        <Pencil size={13} />
-                      </button>
+                      {!list.scan_id && (
+                        <button
+                          onClick={() => startEdit(list)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
                       <button
                         onClick={() => deleteList(list.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                       >
                         <Trash2 size={13} />
                       </button>
@@ -194,7 +209,7 @@ export default function ListsPage() {
           </div>
         )}
 
-        <Link href="/" className="block text-center text-sm text-teal-600 hover:text-teal-700 font-medium">
+        <Link href="/" className="block text-center text-sm text-violet-600 hover:text-violet-700 font-medium">
           ← Back to map
         </Link>
       </div>

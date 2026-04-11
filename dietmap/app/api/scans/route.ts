@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { query } from '@/lib/db';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { buildScanPrompt, parseScanResponse } from '@/lib/scanner';
+import { geocodeRestaurant, getPlacePhotos } from '@/lib/geocode';
 import { DietaryTag, Scan } from '@/lib/types';
 
 export const maxDuration = 120;
 
-const client = new Anthropic();
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY ?? '');
 
 /** Write a progress note to result_summary so the frontend can poll it */
 async function log(scanId: string, msg: string) {
@@ -28,9 +29,11 @@ export async function GET() {
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const rows = await query<Scan>(
-      `SELECT s.*, COUNT(sr.id)::int AS restaurant_count
+      `SELECT s.*,
+              COUNT(DISTINCT LOWER(REGEXP_REPLACE(r.name, '[^a-zA-Z0-9]', '', 'g')))::int AS restaurant_count
        FROM scans s
        LEFT JOIN scan_restaurants sr ON sr.scan_id = s.id
+       LEFT JOIN restaurants r ON r.id = sr.restaurant_id
        WHERE s.user_id = $1
        GROUP BY s.id
        ORDER BY s.created_at DESC`,
@@ -74,19 +77,21 @@ export async function POST(req: NextRequest) {
       lng?: number;
       travelDatesStart?: string;
       travelDatesEnd?: string;
+      searchLevels?: { high: boolean; medium: boolean; low: boolean };
+      maxDistanceKm?: number;
     };
 
-    const { destination, tripName, dietaryTags, lat, lng, travelDatesStart, travelDatesEnd } = body;
+    const { destination, tripName, dietaryTags, lat, lng, travelDatesStart, travelDatesEnd, searchLevels, maxDistanceKm } = body;
     if (!destination || !dietaryTags?.length) {
       return NextResponse.json({ error: 'destination and dietaryTags are required' }, { status: 400 });
     }
 
     // Create scan row
     const scanRows = await query<{ id: string }>(
-      `INSERT INTO scans (user_id, destination, dietary_tags, travel_dates_start, travel_dates_end, status, result_summary)
-       VALUES ($1, $2, $3::text[], $4, $5, 'processing', '')
+      `INSERT INTO scans (user_id, destination, trip_name, dietary_tags, travel_dates_start, travel_dates_end, status, result_summary)
+       VALUES ($1, $2, $3, $4::text[], $5, $6, 'processing', '')
        RETURNING id`,
-      [userId, destination, dietaryTags, travelDatesStart ?? null, travelDatesEnd ?? null]
+      [userId, destination, tripName ?? null, dietaryTags, travelDatesStart ?? null, travelDatesEnd ?? null]
     );
     scanId = scanRows[0].id;
 
@@ -97,101 +102,217 @@ export async function POST(req: NextRequest) {
     await log(scanId, `Scan started. Destination: ${destination}${lat != null ? ` (${lat.toFixed(4)}, ${lng?.toFixed(4)})` : ''}`);
     await log(scanId, `Dietary tags: ${dietaryTags.join(', ')}`);
 
-    const prompt = buildScanPrompt(
+    const prompt1 = buildScanPrompt(
       destination,
       dietaryTags as DietaryTag[],
       travelDatesStart,
       travelDatesEnd,
       lat,
       lng,
+      searchLevels,
+      maxDistanceKm,
+      false,
+      1,
+    );
+    const prompt2 = buildScanPrompt(
+      destination,
+      dietaryTags as DietaryTag[],
+      travelDatesStart,
+      travelDatesEnd,
+      lat,
+      lng,
+      searchLevels,
+      maxDistanceKm,
+      false,
+      2,
     );
 
-    await log(scanId, 'Calling Anthropic API with web search...');
+    await log(scanId, 'Calling Gemini API (2 parallel searches)...');
 
-    // Retry up to 3 times on 529 overloaded
-    let response: Anthropic.Message | null = null;
-    let lastErr: Error | null = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await log(scanId, `API attempt ${attempt}/3...`);
-        response = await client.messages.create({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 8000,
-          system: 'You are a dietary travel research assistant. Always respond with raw JSON only — no markdown, no code fences, no explanation text before or after the JSON object.',
-          tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
-          messages: [{ role: 'user', content: prompt }],
-        });
-        await log(scanId, `API attempt ${attempt} succeeded.`);
-        lastErr = null;
-        break;
-      } catch (err: unknown) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        const isOverloaded = lastErr.message.includes('overloaded') || lastErr.message.includes('529');
-        await log(scanId, `API attempt ${attempt} failed: ${lastErr.message}`);
-        if (!isOverloaded || attempt === 3) break;
-        const wait = attempt * 15000;
-        await log(scanId, `Overloaded — waiting ${wait / 1000}s before retry...`);
-        await new Promise(r => setTimeout(r, wait));
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      systemInstruction: 'You are a dietary travel research assistant. Always respond with raw JSON only — no markdown, no code fences, no explanation text before or after the JSON object.',
+      tools: [{ googleSearch: {} } as object],
+    });
+
+    async function callGemini(prompt: string, label: string): Promise<{ text: string; tokens: number }> {
+      let lastErr: Error | null = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await log(scanId!, `[${label}] API attempt ${attempt}/3...`);
+          const result = await model.generateContent(prompt);
+          const candidate = result.response.candidates?.[0];
+          const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
+          const tokens = (result.response.usageMetadata?.promptTokenCount ?? 0) + (result.response.usageMetadata?.candidatesTokenCount ?? 0);
+          if (text.trim()) {
+            await log(scanId!, `[${label}] attempt ${attempt} succeeded. Tokens: ${tokens}`);
+            return { text, tokens };
+          }
+        } catch (err: unknown) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          await log(scanId!, `[${label}] attempt ${attempt} failed: ${lastErr.message}`);
+          if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 5000));
+        }
       }
+      throw lastErr ?? new Error(`No text response from Gemini [${label}]`);
     }
 
-    if (!response) throw lastErr ?? new Error('All API attempts failed');
+    // Run both searches in parallel
+    const [res1, res2] = await Promise.allSettled([
+      callGemini(prompt1, 'search1'),
+      callGemini(prompt2, 'search2'),
+    ]);
 
-    await log(scanId, `Tokens used: input=${response.usage?.input_tokens} output=${response.usage?.output_tokens}`);
-    await log(scanId, `Response blocks: ${response.content.map(b => b.type).join(', ')}`);
+    let textContent = '';
+    let tokensUsed = 0;
 
-    const textContent = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map(b => b.text)
-      .join('');
-
-    await log(scanId, `Text content length: ${textContent.length} chars`);
+    if (res1.status === 'fulfilled') {
+      textContent = res1.value.text;
+      tokensUsed += res1.value.tokens;
+    } else {
+      await log(scanId, `Search 1 failed: ${res1.reason}`);
+    }
+    if (res2.status === 'fulfilled') {
+      tokensUsed += res2.value.tokens;
+    } else {
+      await log(scanId, `Search 2 failed: ${res2.reason}`);
+    }
 
     if (!textContent.trim()) {
-      throw new Error('No text response from AI — only tool calls returned, no final JSON');
+      throw new Error('Both search attempts returned no content');
     }
 
-    await log(scanId, 'Parsing JSON response...');
-    const tokensUsed = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    await log(scanId, `Combined tokens used: ${tokensUsed}`);
+    await log(scanId, 'Parsing JSON responses...');
 
-    // Append raw response after log lines
+    // Append raw response for debugging
     await query(
       `UPDATE scans SET result_summary = result_summary || $1 WHERE id = $2`,
-      [`\n\n--- RAW RESPONSE ---\n${textContent.slice(0, 8000)}`, scanId]
+      [`\n\n--- RAW RESPONSE (search1) ---\n${textContent.slice(0, 4000)}`, scanId]
     );
 
     const scanResult = parseScanResponse(textContent);
+
+    // Merge restaurants from search2 if it succeeded
+    if (res2.status === 'fulfilled') {
+      try {
+        const scanResult2 = parseScanResponse(res2.value.text);
+        const extra = scanResult2.restaurants ?? [];
+        await log(scanId, `Search 2 returned ${extra.length} restaurants to merge`);
+        await query(
+          `UPDATE scans SET result_summary = result_summary || $1 WHERE id = $2`,
+          [`\n\n--- RAW RESPONSE (search2) ---\n${res2.value.text.slice(0, 4000)}`, scanId]
+        );
+        scanResult.restaurants = [...(scanResult.restaurants ?? []), ...extra];
+      } catch (parseErr) {
+        await log(scanId, `Search 2 parse failed: ${parseErr instanceof Error ? parseErr.message : parseErr}`);
+      }
+    }
     await log(scanId, `Parsed OK. Restaurants: ${scanResult.restaurants?.length ?? 0}, safe dishes: ${(scanResult.safe_dishes as unknown[])?.length ?? 0}, danger foods: ${(scanResult.danger_foods as unknown[])?.length ?? 0}`);
 
+    // Filter out restaurants whose coordinates are implausibly far from the scan centre
+    const distFromCentre = (rLat: number, rLng: number) => {
+      if (lat == null || lng == null) return 0;
+      const dlat = (rLat - lat) * 111000;
+      const dlng = (rLng - lng) * 111000 * Math.cos(rLat * Math.PI / 180);
+      return Math.sqrt(dlat * dlat + dlng * dlng);
+    };
+    const maxAllowedM = (maxDistanceKm ?? 10) * 1000 * 2; // 2× the search radius
+
     // Deduplicate within the AI's own response (same name + within 300m)
+    const VALID_CONFIDENCE = new Set(['high', 'medium', 'low']);
+    const safeConfidence = (v: unknown) => (typeof v === 'string' && VALID_CONFIDENCE.has(v)) ? v : null;
     const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const dedupedList: NonNullable<typeof scanResult.restaurants> = [];
     for (const r of scanResult.restaurants ?? []) {
       if (!r.name || r.lat == null || r.lng == null) continue;
+      // Skip if the AI hallucinated coordinates far outside the search area
+      if (lat != null && distFromCentre(r.lat, r.lng) > maxAllowedM) {
+        await log(scanId, `Skipping "${r.name}" — coordinates too far from centre (${(distFromCentre(r.lat, r.lng) / 1000).toFixed(1)} km)`);
+        continue;
+      }
+      const normWebsite = (u?: string | null) => u ? u.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').toLowerCase() : null;
+      const dist2d = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+        const dlat = (aLat - bLat) * 111000;
+        const dlng = (aLng - bLng) * 111000 * Math.cos(bLat * Math.PI / 180);
+        return Math.sqrt(dlat * dlat + dlng * dlng);
+      };
       const isDup = dedupedList.some(e => {
-        const dlat = (e.lat - r.lat) * 111000;
-        const dlng = (e.lng - r.lng) * 111000 * Math.cos(r.lat * Math.PI / 180);
-        return Math.sqrt(dlat * dlat + dlng * dlng) < 300 && normName(e.name) === normName(r.name);
+        const d = dist2d(e.lat, e.lng, r.lat, r.lng);
+        // Same website AND within 500m = same branch (not a chain location elsewhere)
+        const ew = normWebsite(e.website); const rw = normWebsite(r.website);
+        if (ew && rw && ew === rw && d < 500) return true;
+        if (d >= 300) return false;
+        // Exact normalized match OR one name contains the other (handles "Branch" / "Ponsonby" suffix variants)
+        const n1 = normName(e.name); const n2 = normName(r.name);
+        return n1 === n2 || n1.startsWith(n2) || n2.startsWith(n1);
       });
       if (!isDup) dedupedList.push(r);
     }
     await log(scanId, `After dedup: ${dedupedList.length} unique restaurants (was ${scanResult.restaurants?.length ?? 0})`);
 
+    // Geocode each restaurant's address for accurate coordinates
+    await log(scanId, 'Geocoding restaurant addresses...');
+    const geocodedRaw = (lat != null && lng != null && scanId != null
+      ? await Promise.all(dedupedList.map(async r => {
+          const gc = await geocodeRestaurant(r.name, r.address ?? '', lat, lng);
+          if (gc) {
+            await log(scanId!, `Geocoded "${r.name}": (${gc.lat.toFixed(5)}, ${gc.lng.toFixed(5)})`);
+            const photos = await getPlacePhotos(gc.placeId, 5);
+            return { ...r, lat: gc.lat, lng: gc.lng, menu_photo_urls: photos.length ? photos : (r.menu_photo_urls ?? []) };
+          }
+          return r;
+        }))
+      : dedupedList
+    ).filter(r => distFromCentre(r.lat, r.lng) <= maxAllowedM);
+
+    // Dedup by coordinates after geocoding — same Google Places result = same business
+    const normWebsite2 = (u?: string | null) => u ? u.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').toLowerCase() : null;
+    const geocodedList: typeof geocodedRaw = [];
+    for (const r of geocodedRaw) {
+      const isSameLocation = geocodedList.some(e => {
+        const dlat = (e.lat - r.lat) * 111000;
+        const dlng = (e.lng - r.lng) * 111000 * Math.cos(r.lat * Math.PI / 180);
+        const d = Math.sqrt(dlat * dlat + dlng * dlng);
+        // Same website AND within 500m = same branch (geocoded coords are accurate here)
+        const ew = normWebsite2(e.website); const rw = normWebsite2(r.website);
+        if (ew && rw && ew === rw && d < 500) return true;
+        return d < 25; // within 25m = same business by location alone
+      });
+      if (isSameLocation) {
+        await log(scanId, `Skipping "${r.name}" — same location as an existing entry`);
+        continue;
+      }
+      geocodedList.push(r);
+    }
+    await log(scanId, `After coordinate dedup: ${geocodedList.length} restaurants`);
+
     // Upsert restaurants
     await log(scanId, 'Saving restaurants...');
-    for (const r of dedupedList) {
+    for (const r of geocodedList) {
       let restaurantId: string | null = null;
 
+      // Match by name similarity OR very close proximity (catches name variants like "Prego" vs "Prego Restaurant")
       const existing = await query<{ id: string }>(
         `SELECT id FROM restaurants
-         WHERE visibility = 'public'
-           AND ST_DWithin(location, ST_MakePoint($2, $3)::geography, 300)
+         WHERE (visibility = 'public' OR discovered_by = $4)
            AND (
-             LOWER(name) = LOWER($1)
-             OR LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) = LOWER(REGEXP_REPLACE($1, '[^a-zA-Z0-9]', '', 'g'))
+             -- Same website within 1km = same business (handles name variant duplicates)
+             (website IS NOT NULL AND website = $5
+              AND ST_DWithin(location, ST_MakePoint($2, $3)::geography, 1000))
+             OR
+             (ST_DWithin(location, ST_MakePoint($2, $3)::geography, 300)
+               AND (
+                 LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) = LOWER(REGEXP_REPLACE($1, '[^a-zA-Z0-9]', '', 'g'))
+                 OR LOWER(REGEXP_REPLACE($1, '[^a-zA-Z0-9 ]', '', 'g')) LIKE LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9 ]', '', 'g')) || '%'
+                 OR LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9 ]', '', 'g')) LIKE LOWER(REGEXP_REPLACE($1, '[^a-zA-Z0-9 ]', '', 'g')) || '%'
+               )
+             )
+             OR (ST_DWithin(location, ST_MakePoint($2, $3)::geography, 8)
+                 AND LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) = LOWER(REGEXP_REPLACE($1, '[^a-zA-Z0-9]', '', 'g')))
            )
          LIMIT 1`,
-        [r.name, r.lng, r.lat]
+        [r.name, r.lng, r.lat, userId, r.website ?? null]
       );
 
       if (existing.length) {
@@ -203,10 +324,10 @@ export async function POST(req: NextRequest) {
 
         const created = await query<{ id: string }>(
           `INSERT INTO restaurants
-             (name, address, location, cuisine_type, visibility, discovered_by, added_by, source)
-           VALUES ($1, $2, ST_MakePoint($3, $4)::geography, $5::text[], 'private', $6, $6, 'area_scan')
+             (name, address, location, cuisine_type, website, phone, visibility, discovered_by, added_by, source)
+           VALUES ($1, $2, ST_MakePoint($3, $4)::geography, $5::text[], $6, $7, 'private', $8, $8, 'area_scan')
            RETURNING id`,
-          [r.name, r.address ?? '', r.lng, r.lat, cuisineArr, userId]
+          [r.name, r.address ?? '', r.lng, r.lat, cuisineArr, r.website ?? null, r.phone ?? null, userId]
         );
         restaurantId = created[0].id;
 
@@ -226,65 +347,29 @@ export async function POST(req: NextRequest) {
 
       await query(
         `INSERT INTO scan_restaurants
-           (scan_id, restaurant_id, ai_notes, ai_safety_confidence, recommended_dishes, warnings, source_urls)
-         VALUES ($1, $2, $3, $4, $5::text[], $6::text[], $7::text[])
+           (scan_id, restaurant_id, ai_notes, ai_safety_confidence, recommended_dishes, warnings, source_urls, menu_photo_urls)
+         VALUES ($1, $2, $3, $4, $5::text[], $6::text[], $7::text[], $8::text[])
          ON CONFLICT (scan_id, restaurant_id) DO NOTHING`,
         [
           scanId, restaurantId,
           r.notes ?? null,
-          r.safety_confidence ?? null,
+          safeConfidence(r.safety_confidence),
           r.recommended_dishes ?? [],
           r.warnings ?? [],
           r.source_urls ?? [],
+          r.menu_photo_urls ?? [],
         ]
       );
     }
 
     await log(scanId, 'Completing scan...');
 
-    // Merge top-rated community restaurants from the database
-    if (lat != null && lng != null) {
-      try {
-        const communityRows = await query<{ id: string }>(
-          `SELECT r.id
-           FROM restaurants r
-           WHERE r.visibility = 'public'
-             AND ST_DWithin(r.location, ST_MakePoint($1, $2)::geography, 10000)
-             AND EXISTS (
-               SELECT 1 FROM restaurant_dietary_tags rdt
-               WHERE rdt.restaurant_id = r.id AND rdt.tag = ANY($3::text[])
-             )
-           ORDER BY (
-             SELECT AVG(rv.rating) FROM reviews rv WHERE rv.restaurant_id = r.id
-           ) DESC NULLS LAST,
-           (
-             SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id
-           ) DESC NULLS LAST
-           LIMIT 15`,
-          [lng, lat, dietaryTags]
-        );
-        let added = 0;
-        for (const row of communityRows) {
-          const res = await query(
-            `INSERT INTO scan_restaurants (scan_id, restaurant_id)
-             VALUES ($1, $2)
-             ON CONFLICT (scan_id, restaurant_id) DO NOTHING`,
-            [scanId, row.id]
-          );
-          if ((res as unknown as { rowCount: number }).rowCount > 0) added++;
-        }
-        await log(scanId, `Merged ${added} community restaurants (${communityRows.length} found nearby).`);
-      } catch (communityErr) {
-        await log(scanId, `Warning: community merge failed: ${communityErr instanceof Error ? communityErr.message : communityErr}`);
-      }
-    }
-
     // Create a list for this trip and bulk-add all restaurants to it
     const listName = (tripName || destination).slice(0, 100);
     try {
       const listRows = await query<{ id: string }>(
-        `INSERT INTO lists (user_id, name, color) VALUES ($1, $2, '#2563EB') RETURNING id`,
-        [userId, listName]
+        `INSERT INTO lists (user_id, name, color, scan_id) VALUES ($1, $2, '#2563EB', $3) RETURNING id`,
+        [userId, listName, scanId]
       );
       if (listRows.length) {
         await query(
@@ -315,7 +400,9 @@ export async function POST(req: NextRequest) {
         JSON.stringify(scanResult.phrase_cards ?? []),
         JSON.stringify(scanResult.safe_dishes ?? []),
         JSON.stringify(scanResult.danger_foods ?? []),
-        scanResult.cuisine_notes ?? null,
+        Array.isArray(scanResult.cuisine_notes)
+          ? (scanResult.cuisine_notes as string[]).join('\n')
+          : (scanResult.cuisine_notes ?? null),
         scanResult.coverage_confidence ?? null,
         scanResult.coverage_note ?? null,
         tokensUsed,

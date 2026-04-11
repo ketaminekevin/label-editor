@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Restaurant, DietaryTag, formatDistance, List } from '@/lib/types';
 import { Navbar } from '@/components/Navbar';
-import { FilterBar } from '@/components/FilterBar';
+import { FilterBar, SafetyFilter, MapStyleId, MAP_STYLES } from '@/components/FilterBar';
 import { RestaurantCard } from '@/components/RestaurantCard';
 import { RestaurantPanel } from '@/components/RestaurantPanel';
-import { ChevronRight, ChevronLeft, X, MapPin } from 'lucide-react';
+import { AssistantPanel } from '@/components/AssistantPanel';
+import { ChevronRight, ChevronLeft, X, MapPin, Navigation } from 'lucide-react';
 import clsx from 'clsx';
 
 const Map = dynamic(() => import('@/components/Map').then(m => ({ default: m.Map })), {
@@ -26,6 +27,10 @@ export default function HomePage() {
   const [filtersInitialised, setFiltersInitialised] = useState(false);
   const [isPro, setIsPro] = useState(false);
   const [showAI, setShowAI] = useState(true);
+  const [safetyFilter, setSafetyFilter] = useState<SafetyFilter>('all');
+  const [minRating, setMinRating] = useState<number | null>(null);
+  const [maxPrice, setMaxPrice] = useState<number | null>(null);
+  const [mapStyle, setMapStyle] = useState<MapStyleId>('light');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedRestaurantId, setSelectedRestaurantId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,20 +41,22 @@ export default function HomePage() {
 
   // Unified search state
   const [searchQuery, setSearchQuery] = useState('');
-  const [locationPinned, setLocationPinned] = useState(false); // true when a geocoded location is selected
-  const [locationSuggestions, setLocationSuggestions] = useState<{ place_name: string; center: [number, number] }[]>([]);
-  const [locationDropdownOpen, setLocationDropdownOpen] = useState(false);
+  const [locationPinned, setLocationPinned] = useState(false);
   const [selectedRadius, setSelectedRadius] = useState<number | null>(null);
   const [fixedCenter, setFixedCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [flyToTarget, setFlyToTarget] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
-  const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stable ref so the Google Places listener always sees fresh state
+  const onPlaceSelectedRef = useRef<((lat: number, lng: number, name: string) => void) | null>(null);
 
   const [useMiles, setUseMiles] = useState(false);
   useEffect(() => {
     setUseMiles(localStorage.getItem('dietmap_use_miles') === '1');
   }, []);
+
+  // Stable ref so map-move callback can read current pin state without stale closure
+  const locationPinnedRef = useRef(false);
+  useEffect(() => { locationPinnedRef.current = locationPinned; }, [locationPinned]);
 
   // Open a restaurant directly when navigating from the lists page
   useEffect(() => {
@@ -63,6 +70,17 @@ export default function HomePage() {
         setFlyToTarget({ lat, lng, zoom: 15 });
       }
     }
+  }, []);
+
+  // AI assistant → fly to restaurant on map
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { restaurantId, lat, lng } = (e as CustomEvent<{ restaurantId: string; lat: number; lng: number }>).detail;
+      setSelectedRestaurantId(restaurantId);
+      setFlyToTarget({ lat, lng, zoom: 16 });
+    };
+    window.addEventListener('dietmap:fly-to', handler);
+    return () => window.removeEventListener('dietmap:fly-to', handler);
   }, []);
 
   // Auto-select user's dietary restrictions from profile
@@ -100,39 +118,19 @@ export default function HomePage() {
     return map;
   }, [lists]);
 
-  const fetchSuggestions = useCallback(async (q: string) => {
-    if (q.length < 2) { setLocationSuggestions([]); return; }
-    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-    if (!token) return;
-    try {
-      const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${token}&types=place,address,poi&limit=5`
-      );
-      const data = await res.json();
-      setLocationSuggestions(data.features?.map((f: { place_name: string; center: [number, number] }) => ({
-        place_name: f.place_name,
-        center: f.center,
-      })) ?? []);
-    } catch {
-      setLocationSuggestions([]);
-    }
-  }, []);
-
-  const onSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    setLocationPinned(false); // typing clears pinned state
-    setLocationDropdownOpen(true);
-    if (suggestDebounceRef.current) clearTimeout(suggestDebounceRef.current);
-    suggestDebounceRef.current = setTimeout(() => fetchSuggestions(val), 280);
+  const clearSearch = () => {
+    setSearchQuery('');
+    setLocationPinned(false);
+    setFixedCenter(null);
+    setSelectedRadius(null);
+    lastFetchRef.current = '';
+    if (searchInputRef.current) searchInputRef.current.value = '';
   };
 
-  const selectLocation = (suggestion: { place_name: string; center: [number, number] }) => {
-    const [lng, lat] = suggestion.center;
-    setSearchQuery(suggestion.place_name.split(',')[0]);
+  // Keep onPlaceSelectedRef up-to-date with latest state/callbacks
+  onPlaceSelectedRef.current = (lat: number, lng: number, name: string) => {
+    setSearchQuery(name);
     setLocationPinned(true);
-    setLocationDropdownOpen(false);
-    setLocationSuggestions([]);
     setFixedCenter({ lat, lng });
     setFlyToTarget({ lat, lng, zoom: 13 });
     lastFetchRef.current = '';
@@ -142,24 +140,38 @@ export default function HomePage() {
     fetchRestaurantsAt(bbox.swLat, bbox.swLng, bbox.neLat, bbox.neLng);
   };
 
-  const clearSearch = () => {
-    setSearchQuery('');
-    setLocationPinned(false);
-    setFixedCenter(null);
-    setSelectedRadius(null);
-    setLocationSuggestions([]);
-    lastFetchRef.current = '';
-  };
-
+  // Google Places Autocomplete on the location search input
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        searchInputRef.current && !searchInputRef.current.contains(e.target as Node) &&
-        suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)
-      ) setLocationDropdownOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY;
+    if (!apiKey || !searchInputRef.current) return;
+
+    function initAC() {
+      if (!searchInputRef.current || !window.google?.maps?.places) return;
+      const ac = new window.google.maps.places.Autocomplete(searchInputRef.current, {
+        fields: ['geometry', 'name', 'formatted_address'],
+      });
+      ac.addListener('place_changed', () => {
+        const place = ac.getPlace();
+        if (place.geometry?.location) {
+          const lat = place.geometry.location.lat();
+          const lng = place.geometry.location.lng();
+          const name = place.name || place.formatted_address?.split(',')[0] || '';
+          onPlaceSelectedRef.current?.(lat, lng, name);
+        }
+      });
+    }
+
+    if (window.google?.maps?.places) { initAC(); return; }
+    if (document.querySelector('script[src*="maps.googleapis.com"]')) {
+      const iv = setInterval(() => { if (window.google?.maps?.places) { clearInterval(iv); initAC(); } }, 200);
+      return () => clearInterval(iv);
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
+    script.async = true;
+    script.onload = initAC;
+    document.head.appendChild(script);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Compute a bbox from a centre point + radius in km
@@ -187,8 +199,15 @@ export default function HomePage() {
     }
   }, []);
 
-  // onMapMove passes viewport bounds directly — always fetch what's visible
+  // onMapMove: clear the pinned location when the user pans/zooms away manually
   const fetchRestaurants = useCallback(async (swLat: number, swLng: number, neLat: number, neLng: number) => {
+    if (locationPinnedRef.current) {
+      setLocationPinned(false);
+      setFixedCenter(null);
+      setSelectedRadius(null);
+      setSearchQuery('');
+      if (searchInputRef.current) searchInputRef.current.value = '';
+    }
     await fetchRestaurantsAt(swLat, swLng, neLat, neLng);
   }, [fetchRestaurantsAt]);
 
@@ -230,15 +249,34 @@ export default function HomePage() {
     return [...base].sort((a, b) => (Number(b.avg_rating) || 0) - (Number(a.avg_rating) || 0));
   }, [nameFiltered, isPro, showAI]);
 
-  // Sidebar shows only dietary-matching restaurants
-  const sorted = useMemo(() =>
-    selectedFilters.length === 0
+  // Sidebar shows dietary-matching + extra filtered restaurants
+  const sorted = useMemo(() => {
+    let list = selectedFilters.length === 0
       ? mapRestaurants
       : mapRestaurants.filter(r =>
           selectedFilters.some(tag => (r.dietary_tags ?? []).some(dt => dt.tag === tag))
-        ),
-    [mapRestaurants, selectedFilters]
-  );
+        );
+
+    if (safetyFilter === 'allergy_safe') {
+      list = list.filter(r =>
+        (r.dietary_tags ?? []).some(dt => dt.safety_level === 'dedicated' || dt.safety_level === 'careful')
+      );
+    } else if (safetyFilter === 'has_options') {
+      list = list.filter(r =>
+        (r.dietary_tags ?? []).some(dt => dt.safety_level === 'has_options')
+      );
+    }
+
+    if (minRating !== null) {
+      list = list.filter(r => r.avg_rating != null && Number(r.avg_rating) >= minRating);
+    }
+
+    if (maxPrice !== null) {
+      list = list.filter(r => r.price_level == null || r.price_level <= maxPrice);
+    }
+
+    return list;
+  }, [mapRestaurants, selectedFilters, safetyFilter, minRating, maxPrice]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -250,6 +288,14 @@ export default function HomePage() {
         isPro={isPro}
         showAI={showAI}
         onToggleAI={() => setShowAI(v => !v)}
+        safetyFilter={safetyFilter}
+        onSafetyFilter={setSafetyFilter}
+        minRating={minRating}
+        onMinRating={setMinRating}
+        maxPrice={maxPrice}
+        onMaxPrice={setMaxPrice}
+        mapStyle={mapStyle}
+        onMapStyle={setMapStyle}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -270,30 +316,14 @@ export default function HomePage() {
                     ref={searchInputRef}
                     type="text"
                     placeholder="Search restaurants or locations…"
-                    value={searchQuery}
-                    onChange={onSearchInput}
-                    onFocus={() => !locationPinned && searchQuery.length >= 2 && setLocationDropdownOpen(true)}
+                    defaultValue={searchQuery}
+                    onChange={e => { if (!e.target.value) clearSearch(); else setLocationPinned(false); }}
                     className="w-full pl-8 pr-8 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
                   />
-                  {searchQuery && (
+                  {locationPinned && (
                     <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                       <X size={13} />
                     </button>
-                  )}
-                  {locationDropdownOpen && locationSuggestions.length > 0 && (
-                    <div ref={suggestionsRef} className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden">
-                      {locationSuggestions.map((s, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onMouseDown={e => { e.preventDefault(); selectLocation(s); }}
-                          className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-800 transition-colors flex items-start gap-2 border-b border-gray-50 last:border-0"
-                        >
-                          <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
-                          <span className="line-clamp-1">{s.place_name}</span>
-                        </button>
-                      ))}
-                    </div>
                   )}
                 </div>
 
@@ -320,11 +350,16 @@ export default function HomePage() {
                   </div>
                 )}
 
-                {fixedCenter && (
+                {fixedCenter ? (
                   <p className="text-xs text-blue-600 flex items-center gap-1">
                     <MapPin size={10} />
                     Within {formatDistance(selectedRadius ?? 10, useMiles)} of {searchQuery || 'selected location'}
                   </p>
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                    <Navigation size={10} className="text-gray-400 flex-shrink-0" />
+                    <span className="text-xs text-gray-500">Showing restaurants in current map view</span>
+                  </div>
                 )}
 
                 <p className="text-xs text-gray-400 uppercase tracking-wide pt-0.5">
@@ -381,6 +416,7 @@ export default function HomePage() {
             flyToTarget={flyToTarget}
             restaurantListColor={restaurantListColor}
             selectedRestaurantId={selectedRestaurantId}
+            mapStyle={MAP_STYLES[mapStyle].url}
           />
 
           <div
@@ -395,6 +431,9 @@ export default function HomePage() {
             restaurantId={selectedRestaurantId}
             onClose={() => setSelectedRestaurantId(null)}
           />
+
+          {/* AI Assistant — all logged-in users */}
+          {session && <AssistantPanel />}
         </div>
       </div>
     </div>

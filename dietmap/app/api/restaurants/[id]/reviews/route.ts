@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { query } from '@/lib/db';
+import { screenReview } from '@/lib/gemini-moderation';
 
 function privatiseName(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -36,7 +37,7 @@ export async function GET(
          FROM review_votes GROUP BY review_id
        ) v ON v.review_id = r.id
        LEFT JOIN review_votes mv ON mv.review_id = r.id AND mv.user_id = $2
-       WHERE r.restaurant_id = $1
+       WHERE r.restaurant_id = $1 AND r.hidden = FALSE
        ORDER BY r.created_at DESC`,
       [id, userId]
     );
@@ -49,7 +50,7 @@ export async function GET(
               u.name AS user_name, u.avatar_url AS user_avatar
        FROM reviews r
        JOIN users u ON u.id = r.user_id
-       WHERE r.restaurant_id = $1
+       WHERE r.restaurant_id = $1 AND r.hidden = FALSE
        ORDER BY r.created_at DESC`,
       [id]
     );
@@ -110,8 +111,42 @@ export async function POST(
        SET source = 'user_added', visibility = 'public', discovered_by = NULL
        WHERE id = $1 AND source = 'area_scan'`,
       [id]
-    ).catch(() => {}); // non-fatal
+    ).catch(() => {});
   }
 
-  return NextResponse.json({ id: rows[0].id }, { status: rows[0].created ? 201 : 200 });
+  const reviewId = rows[0].id;
+
+  // AI content screening
+  const rest = await query<{ name: string }>(
+    `SELECT name FROM restaurants WHERE id = $1`, [id]
+  ).catch(() => [] as { name: string }[]);
+  const restaurantName = rest[0]?.name ?? 'Unknown restaurant';
+
+  // Log immediately so admin sees it
+  await query(
+    `INSERT INTO activity_log (admin_id, action, target_type, target_id, detail, stage)
+     VALUES ($1, 'review_submitted', 'review', $2, $3, 'received')`,
+    [session.user.id, reviewId, `Review submitted for "${restaurantName}". AI screening pending…`]
+  ).catch(() => {});
+
+  // AI screen (synchronous — result determines hidden status)
+  const screening = await screenReview({
+    body: body.trim(),
+    rating,
+    restaurant_name: restaurantName,
+  }).catch(() => ({ action: 'approve' as const, confidence: 50, summary: 'AI unavailable' }));
+
+  if (screening.action === 'remove') {
+    await query(`UPDATE reviews SET hidden = TRUE WHERE id = $1`, [reviewId]).catch(() => {});
+  }
+
+  await query(
+    `UPDATE activity_log SET stage = 'complete', detail = $1 WHERE target_id = $2 AND action = 'review_submitted'`,
+    [`Review submitted for "${restaurantName}". AI: ${screening.action} (${screening.confidence}%) — ${screening.summary}${screening.action === 'remove' ? ' — auto-hidden' : ''}`, reviewId]
+  ).catch(() => {});
+
+  return NextResponse.json(
+    { id: reviewId, flagged: screening.action === 'flag', hidden: screening.action === 'remove' },
+    { status: rows[0].created ? 201 : 200 }
+  );
 }

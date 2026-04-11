@@ -2,10 +2,25 @@ import { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { query } from './db';
+import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
-function hashPassword(password: string): string {
+// Legacy SHA-256 hash for migration path only
+function legacyHash(password: string): string {
   return crypto.createHash('sha256').update(password + process.env.NEXTAUTH_SECRET).digest('hex');
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12);
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  // Bcrypt hashes start with $2b$ or $2a$
+  if (storedHash.startsWith('$2')) {
+    return bcrypt.compare(password, storedHash);
+  }
+  // Legacy SHA-256 hash
+  return legacyHash(password) === storedHash;
 }
 
 export const authOptions: NextAuthOptions = {
@@ -38,8 +53,13 @@ export const authOptions: NextAuthOptions = {
         );
         const user = rows[0];
         if (!user || !user.password_hash) return null;
-        const hash = hashPassword(credentials.password);
-        if (hash !== user.password_hash) return null;
+        const valid = await verifyPassword(credentials.password, user.password_hash);
+        if (!valid) return null;
+        // Upgrade legacy SHA-256 hash to bcrypt on successful login
+        if (!user.password_hash.startsWith('$2')) {
+          const newHash = await hashPassword(credentials.password);
+          await query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]).catch(() => {});
+        }
         return {
           id: user.id,
           email: user.email,
@@ -68,22 +88,23 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, user }) {
       if (user) token.id = user.id;
-      // Always resolve ID from DB so stale JWTs (e.g. after a DB reset) self-heal
+      // Always resolve ID + role from DB so stale JWTs self-heal
       if (token.email) {
-        const rows = await query<{ id: string }>(
-          'SELECT id FROM users WHERE email = $1',
+        const rows = await query<{ id: string; role: string }>(
+          'SELECT id, role FROM users WHERE email = $1',
           [token.email.toLowerCase().trim()]
         );
-        if (rows[0]) token.id = rows[0].id;
-        else delete token.id; // user no longer exists
+        if (rows[0]) { token.id = rows[0].id; token.role = rows[0].role; }
+        else { delete token.id; delete token.role; }
       }
       return token;
     },
     async session({ session, token }) {
       if (token.id) session.user.id = token.id as string;
+      if (token.role) session.user.role = token.role as string;
       return session;
     },
   },
 };
 
-export { hashPassword };
+export { verifyPassword };

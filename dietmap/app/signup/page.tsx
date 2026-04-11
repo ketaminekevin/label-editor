@@ -16,6 +16,10 @@ export default function SignupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (name.trim().split(/\s+/).filter(Boolean).length < 2) {
+      setError('Please enter your first and last name.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch('/api/auth/signup', {

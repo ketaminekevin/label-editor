@@ -5,13 +5,14 @@ import { useRouter } from 'next/navigation';
 import {
   X, Star, MapPin, Phone, Globe, ExternalLink,
   MessageSquare, ChevronDown, ChevronUp, Plus, Check, List as ListIcon,
-  Camera, Trash2, Sparkles, ThumbsUp, ThumbsDown,
+  Camera, Trash2, Sparkles, ThumbsUp, ThumbsDown, Flag,
 } from 'lucide-react';
 import {
   Restaurant, Review, DietaryTag, DIETARY_LABELS, DIETARY_ICONS,
   ReviewDietarySafety, List,
 } from '@/lib/types';
 import clsx from 'clsx';
+import { ExpandablePhotoStrip } from './ExpandablePhotoStrip';
 
 const ALL_DIETARY_TAGS: DietaryTag[] = [
   'gluten_free','dairy_free','vegan','vegetarian','keto',
@@ -47,7 +48,7 @@ async function compressImage(file: File): Promise<string> {
 
 // ── Community dietary info ────────────────────────────────────────────────────
 
-function computeDietaryInfo(reviews: Review[]) {
+export function computeDietaryInfo(reviews: Review[]) {
   const data: Record<string, { ratings: number[]; dedicated: boolean }> = {};
   reviews.forEach(rv => {
     (rv.dietary_safety ?? []).forEach(ds => {
@@ -71,7 +72,7 @@ function computeDietaryInfo(reviews: Review[]) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function StarRow({
+export function StarRow({
   value, max = 5, size = 14, color = 'amber',
   interactive = false, onChange,
 }: {
@@ -100,12 +101,35 @@ function StarRow({
 
 // ── ReviewCard ────────────────────────────────────────────────────────────────
 
-function ReviewCard({ review, onPhotoClick }: { review: Review & { user_name?: string; user_avatar?: string | null }; onPhotoClick: (src: string) => void }) {
+export function ReviewCard({ review }: { review: Review & { user_name?: string; user_avatar?: string | null } }) {
   const safetyEntries = (review.dietary_safety ?? []).filter(ds => 'star_rating' in ds);
   const [upvotes, setUpvotes]   = useState(review.upvotes ?? 0);
   const [downvotes, setDownvotes] = useState(review.downvotes ?? 0);
   const [myVote, setMyVote]     = useState<1 | -1 | null>(review.my_vote ?? null);
   const [voting, setVoting]     = useState(false);
+  const [showReviewReport, setShowReviewReport] = useState(false);
+  const [reviewReportReason, setReviewReportReason] = useState('');
+  const [reviewReportDetail, setReviewReportDetail] = useState('');
+  const [reviewReportSubmitting, setReviewReportSubmitting] = useState(false);
+  const [reviewReportDone, setReviewReportDone] = useState(false);
+
+  const submitReviewReport = async () => {
+    if (!reviewReportReason || reviewReportSubmitting) return;
+    setReviewReportSubmitting(true);
+    try {
+      await fetch(`/api/reviews/${review.id}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reviewReportReason, detail: reviewReportDetail }),
+      });
+      setReviewReportDone(true);
+      setShowReviewReport(false);
+      setReviewReportReason('');
+      setReviewReportDetail('');
+    } finally {
+      setReviewReportSubmitting(false);
+    }
+  };
 
   const handleVote = async (v: 1 | -1) => {
     if (voting) return;
@@ -199,18 +223,10 @@ function ReviewCard({ review, onPhotoClick }: { review: Review & { user_name?: s
       <p className="text-sm text-gray-700 leading-relaxed">{review.body}</p>
 
       {review.photos?.length > 0 && (
-        <div className="flex gap-2 flex-wrap">
-          {review.photos.map((photo, i) => (
-            <img
-              key={i} src={photo} alt=""
-              className="w-20 h-20 object-cover rounded-lg border border-gray-100 cursor-pointer hover:opacity-90 transition-opacity"
-              onClick={() => onPhotoClick(photo)}
-            />
-          ))}
-        </div>
+        <ExpandablePhotoStrip photos={review.photos} />
       )}
 
-      {/* Vote buttons */}
+      {/* Vote + report buttons */}
       <div className="flex items-center gap-3 pt-1 border-t border-gray-50">
         <button
           onClick={() => handleVote(1)}
@@ -228,7 +244,60 @@ function ReviewCard({ review, onPhotoClick }: { review: Review & { user_name?: s
           <ThumbsDown size={12} />
           {downvotes > 0 && <span>{downvotes}</span>}
         </button>
+        <button
+          onClick={() => { setShowReviewReport(f => !f); setReviewReportDone(false); }}
+          className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-red-400 transition-colors"
+          title="Report this review"
+        >
+          <Flag size={11} />
+        </button>
       </div>
+
+      {reviewReportDone && (
+        <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+          Review reported. Thanks for helping keep the community trustworthy.
+        </p>
+      )}
+
+      {showReviewReport && (
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">Report this review</p>
+          <select
+            value={reviewReportReason}
+            onChange={e => setReviewReportReason(e.target.value)}
+            className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-red-200"
+          >
+            <option value="">Select a reason…</option>
+            <option value="spam">Spam or fake review</option>
+            <option value="offensive">Offensive or inappropriate</option>
+            <option value="fake_review">Not a genuine experience</option>
+            <option value="incorrect_info">Incorrect dietary information</option>
+            <option value="other">Other</option>
+          </select>
+          <textarea
+            value={reviewReportDetail}
+            onChange={e => setReviewReportDetail(e.target.value)}
+            placeholder="Optional: add more detail…"
+            rows={2}
+            className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-red-200 resize-none"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={submitReviewReport}
+              disabled={!reviewReportReason || reviewReportSubmitting}
+              className="px-2.5 py-1 bg-red-500 text-white text-xs font-semibold rounded-lg hover:bg-red-600 transition-colors disabled:opacity-40"
+            >
+              {reviewReportSubmitting ? 'Sending…' : 'Report'}
+            </button>
+            <button
+              onClick={() => { setShowReviewReport(false); setReviewReportReason(''); setReviewReportDetail(''); }}
+              className="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -456,13 +525,19 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [contentVisible, setContentVisible] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
-  const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
+
   const [lists, setLists] = useState<List[]>([]);
   const [showListPicker, setShowListPicker] = useState(false);
   const [listPickerLoading, setListPickerLoading] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState('#3b82f6');
   const [showNewListForm, setShowNewListForm] = useState(false);
+
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [reportDetail, setReportDetail] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
 
   const prevIdRef = useRef<string | null>(null);
   const loadingIdRef = useRef<string | null>(null);
@@ -486,6 +561,8 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
       if (loadingIdRef.current === id) {
         setLoading(false);
         setShowReviewForm(false);
+        setShowReportForm(false);
+        setReportDone(false);
         setTimeout(() => setContentVisible(true), 20);
       }
     }
@@ -497,7 +574,7 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
       setContentVisible(false);
       setRestaurant(null);
       setReviews([]);
-      setLightboxPhoto(null);
+
       prevIdRef.current = null;
       return;
     }
@@ -548,6 +625,27 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
     loadLists();
   };
 
+  const submitReport = async () => {
+    if (!reportReason || !restaurantId || reportSubmitting) return;
+    setReportSubmitting(true);
+    try {
+      const res = await fetch(`/api/restaurants/${restaurantId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reportReason, detail: reportDetail }),
+      });
+      if (!res.ok) throw new Error('Failed to submit report');
+      setReportDone(true);
+      setShowReportForm(false);
+      setReportReason('');
+      setReportDetail('');
+    } catch {
+      alert('Something went wrong submitting your report. Please try again.');
+    } finally {
+      setReportSubmitting(false);
+    }
+  };
+
   const userReview = session ? reviews.find(r => r.user_id === session.user?.id) : undefined;
   const dietaryInfo = restaurant ? computeDietaryInfo(reviews) : [];
 
@@ -555,18 +653,6 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
 
   return (
     <>
-    {lightboxPhoto && (
-      <div
-        className="absolute top-0 bottom-0 z-20 bg-white border-x border-gray-200 flex items-center justify-center cursor-pointer"
-        style={{ right: 'calc(42%)' , width: 360, minWidth: 260 }}
-        onClick={() => setLightboxPhoto(null)}
-      >
-        <div className="px-8 w-full">
-          <img src={lightboxPhoto} alt="" className="w-full h-auto rounded-lg shadow-md object-contain max-h-[80vh]" />
-          <p className="text-xs text-gray-400 text-center mt-2">Click to close</p>
-        </div>
-      </div>
-    )}
     <div
       className={clsx(
         'absolute right-0 top-0 bottom-0 z-30 bg-white border-l border-gray-200 flex flex-col',
@@ -666,16 +752,76 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {restaurant.price_level ? <span className="text-xs text-gray-500 font-medium">{PRICE[restaurant.price_level]}</span> : null}
-                  {restaurant.source === 'area_scan' ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
-                      <Sparkles size={9} /> Trip Planner
-                    </span>
-                  ) : !restaurant.verified ? (
-                    <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">Community Added</span>
-                  ) : null}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {restaurant.price_level ? <span className="text-xs text-gray-500 font-medium">{PRICE[restaurant.price_level]}</span> : null}
+                    {restaurant.source === 'area_scan' ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
+                        <Sparkles size={9} /> Smart Search
+                      </span>
+                    ) : restaurant.source === 'seed' ? (
+                      <span className="text-xs text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">Unverified</span>
+                    ) : !restaurant.verified ? (
+                      <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">Community Added</span>
+                    ) : null}
+                  </div>
+                  {session && (
+                    <button
+                      onClick={() => { setShowReportForm(f => !f); setReportDone(false); }}
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
+                      title="Report this listing"
+                    >
+                      <Flag size={11} />
+                      <span>Report</span>
+                    </button>
+                  )}
                 </div>
+
+                {/* Restaurant report form — shown below info box */}
+                {reportDone && (
+                  <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mx-0 mt-2">
+                    Thanks for your report. Our team will review it.
+                  </p>
+                )}
+                {showReportForm && (
+                  <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3 mt-2">
+                    <p className="text-xs font-semibold text-gray-700">Report this listing</p>
+                    <select
+                      value={reportReason}
+                      onChange={e => setReportReason(e.target.value)}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-red-200"
+                    >
+                      <option value="">Select a reason…</option>
+                      <option value="wrong_info">Wrong information</option>
+                      <option value="fake_listing">Fake or duplicate listing</option>
+                      <option value="offensive_content">Offensive content</option>
+                      <option value="incorrect_dietary_tags">Incorrect dietary tags</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <textarea
+                      value={reportDetail}
+                      onChange={e => setReportDetail(e.target.value)}
+                      placeholder="Optional: add more detail…"
+                      rows={2}
+                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-200 bg-white resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={submitReport}
+                        disabled={!reportReason || reportSubmitting}
+                        className="px-3 py-1.5 bg-red-500 text-white text-xs font-semibold rounded-lg hover:bg-red-600 transition-colors disabled:opacity-40"
+                      >
+                        {reportSubmitting ? 'Sending…' : 'Submit Report'}
+                      </button>
+                      <button
+                        onClick={() => { setShowReportForm(false); setReportReason(''); setReportDetail(''); }}
+                        className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Dietary Info — auto-expanded */}
@@ -749,11 +895,22 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
                 </div>
               )}
 
+              {/* Seed data prompt */}
+              {restaurant.source === 'seed' && (
+                <div className="mx-4 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1">
+                  <p className="text-xs font-semibold text-slate-700">No dietary info yet</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    This restaurant was imported from OpenStreetMap and hasn&apos;t been verified by the community.
+                    Add a review below to share what dietary options are available.
+                  </p>
+                </div>
+              )}
+
               {/* Reviews */}
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-800">Reviews ({reviews.length})</h3>
-                  <button
+                    <button
                     onClick={() => setShowReviewForm(f => !f)}
                     className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-600 text-blue-600 text-xs font-semibold rounded-lg hover:bg-blue-50 transition-colors"
                   >
@@ -778,16 +935,16 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
                 {reviews.length === 0 ? (
                   <p className="text-center text-sm text-gray-400 py-6">No reviews yet. Be the first!</p>
                 ) : (
-                  reviews.map(r => <ReviewCard key={r.id} review={r} onPhotoClick={setLightboxPhoto} />)
+                  reviews.map(r => <ReviewCard key={r.id} review={r} />)
                 )}
               </div>
 
-              {/* Trip Planner Notes — shown only for AI-found restaurants */}
+              {/* Smart Search Notes — shown only for AI-found restaurants */}
               {restaurant.scan_notes && (
                 <div className="mx-4 mb-4 rounded-xl border-2 border-purple-200 bg-purple-50 p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <Sparkles size={14} className="text-purple-600 flex-shrink-0" />
-                    <span className="text-sm font-bold text-purple-900">Trip Planner Notes</span>
+                    <span className="text-sm font-bold text-purple-900">Smart Search Notes</span>
                     <span className="text-xs text-purple-500 ml-auto">AI · not community verified</span>
                   </div>
                   <p className="text-xs text-purple-700 leading-relaxed">
@@ -837,7 +994,7 @@ export function RestaurantPanel({ restaurantId, onClose }: Props) {
 
 // ── Dietary Info section (separate component to keep panel tidy) ──────────────
 
-function DietaryInfoSection({ dietaryInfo }: {
+export function DietaryInfoSection({ dietaryInfo }: {
   dietaryInfo: { tag: DietaryTag; avg_stars: number; is_dedicated: boolean; count: number }[]
 }) {
   const [expanded, setExpanded] = useState(true);

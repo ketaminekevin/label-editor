@@ -16,7 +16,7 @@ export async function GET(
   if (!rows.length) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (rows[0].user_id !== session.user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const restaurants = await query(
+  const aiRestaurants = await query(
     `SELECT sr.*, r.name, r.address,
        ST_Y(r.location::geometry) AS lat,
        ST_X(r.location::geometry) AS lng,
@@ -32,6 +32,40 @@ export async function GET(
     [id]
   );
 
+  // Also include community-added restaurants from the scan's associated list
+  let communityRestaurants: unknown[] = [];
+  try {
+    communityRestaurants = await query(
+      `SELECT r.id AS restaurant_id, r.name, r.address,
+         ST_Y(r.location::geometry) AS lat,
+         ST_X(r.location::geometry) AS lng,
+         r.cuisine_type, r.price_level, r.website, r.phone, r.visibility,
+         r.source,
+         NULL::text AS ai_notes,
+         NULL::text AS ai_safety_confidence,
+         ARRAY[]::text[] AS recommended_dishes,
+         ARRAY[]::text[] AS warnings,
+         ARRAY[]::text[] AS menu_photo_urls,
+         rl.added_at AS created_at,
+         ROUND(AVG(rv.rating)::numeric, 1) AS avg_rating,
+         COUNT(rv.id)::int AS review_count
+       FROM restaurant_lists rl
+       JOIN lists l ON l.id = rl.list_id
+       JOIN restaurants r ON r.id = rl.restaurant_id
+       LEFT JOIN reviews rv ON rv.restaurant_id = r.id
+       WHERE l.scan_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM scan_restaurants sr2
+           WHERE sr2.scan_id = $1 AND sr2.restaurant_id = r.id
+         )
+       GROUP BY r.id, rl.added_at`,
+      [id]
+    );
+  } catch (e) {
+    console.error('community restaurants query failed:', e);
+  }
+
+  const restaurants = [...aiRestaurants, ...communityRestaurants];
   return NextResponse.json({ ...rows[0], restaurants });
 }
 
@@ -60,6 +94,7 @@ export async function DELETE(
     [id, session.user.id]
   );
 
+  await query(`DELETE FROM lists WHERE scan_id = $1 AND user_id = $2`, [id, session.user.id]);
   await query(`DELETE FROM scans WHERE id = $1`, [id]);
   return NextResponse.json({ ok: true });
 }

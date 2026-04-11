@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { query } from '@/lib/db';
 import { Restaurant } from '@/lib/types';
+import { verifyRestaurantSubmission } from '@/lib/gemini-moderation';
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -59,6 +60,17 @@ export async function GET(req: NextRequest) {
     paramIdx = 4;
   }
 
+  // Only show active listings (pending/flagged/removed are hidden from map)
+  sql += ` AND (r.status IS NULL OR r.status = 'active')`;
+
+  // Hide seed data if the feature flag is off
+  const seedFlag = await query<{ enabled: boolean }>(
+    `SELECT enabled FROM feature_flags WHERE key = 'seed_data'`
+  ).catch(() => []);
+  if (!seedFlag[0]?.enabled) {
+    sql += ` AND r.source != 'seed'`;
+  }
+
   // Visibility: show public + user's own private restaurants
   if (userId) {
     sql += ` AND (r.visibility = 'public' OR (r.visibility = 'private' AND r.discovered_by = $${paramIdx}::uuid))`;
@@ -69,9 +81,9 @@ export async function GET(req: NextRequest) {
   }
 
   if (dietary.length > 0) {
-    sql += ` AND EXISTS (
-      SELECT 1 FROM restaurant_dietary_tags dt2
-      WHERE dt2.restaurant_id = r.id AND dt2.tag = ANY($${paramIdx}::text[])
+    // Require ALL selected tags (AND logic) — restaurant must have every selected dietary tag
+    sql += ` AND $${paramIdx}::text[] <@ ARRAY(
+      SELECT DISTINCT tag FROM restaurant_dietary_tags WHERE restaurant_id = r.id
     )`;
     params.push(dietary);
     paramIdx++;
@@ -109,12 +121,34 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // AI verification — admins bypass the check
+    const isAdmin = session.user.role === 'admin' || session.user.role === 'moderator';
+    let status = 'active';
+    let aiVerdict = null;
+
+    if (!isAdmin) {
+      const verdict = await verifyRestaurantSubmission({
+        name, address,
+        cuisine_type: cuisine_type ?? [],
+        dietary_tags: (dietary_tags ?? []).map((dt: { tag: string }) => dt.tag),
+      });
+      aiVerdict = verdict;
+
+      if (verdict.confidence < 40) {
+        return NextResponse.json(
+          { error: 'We could not verify this listing. Please check the details and try again.' },
+          { status: 422 }
+        );
+      }
+      status = verdict.confidence >= 80 ? 'active' : 'pending';
+    }
+
     const rows = await query<{ id: string }>(
-      `INSERT INTO restaurants (name, address, location, phone, website, price_level, cuisine_type, added_by)
-       VALUES ($1, $2, ST_MakePoint($3, $4)::geography, $5, $6, $7, $8::text[], $9)
+      `INSERT INTO restaurants (name, address, location, phone, website, price_level, cuisine_type, added_by, status, ai_verdict)
+       VALUES ($1, $2, ST_MakePoint($3, $4)::geography, $5, $6, $7, $8::text[], $9, $10, $11)
        RETURNING id`,
       [name, address, lng, lat, phone ?? null, website ?? null, price_level ?? null,
-       cuisine_type ?? [], session.user.id]
+       cuisine_type ?? [], session.user.id, status, aiVerdict ? JSON.stringify(aiVerdict) : null]
     );
     const restaurantId = rows[0].id;
 
@@ -130,7 +164,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ id: restaurantId }, { status: 201 });
+    // Log to activity log
+    const verdictText = isAdmin
+      ? 'Submitted by admin — bypassed AI check'
+      : aiVerdict
+        ? `AI: ${(aiVerdict as { verdict: string; confidence: number }).verdict} (${(aiVerdict as { verdict: string; confidence: number }).confidence}%) → status: ${status}`
+        : `Status: ${status}`;
+    await query(
+      `INSERT INTO activity_log (admin_id, action, target_type, target_id, detail, stage)
+       VALUES ($1, 'restaurant_submitted', 'restaurant', $2, $3, 'complete')`,
+      [session.user.id, restaurantId, `"${name}" submitted. ${verdictText}`]
+    ).catch(() => {});
+
+    return NextResponse.json(
+      { id: restaurantId, status, pending: status === 'pending' },
+      { status: 201 }
+    );
   } catch (err) {
     console.error('POST /api/restaurants error:', err);
     const message = err instanceof Error ? err.message : 'Database error';

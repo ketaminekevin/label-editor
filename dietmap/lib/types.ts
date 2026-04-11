@@ -31,13 +31,14 @@ export interface List {
   user_id: string;
   name: string;
   color: string;
+  scan_id?: string | null;
   created_at: string;
   restaurant_count?: number;
   restaurant_ids?: string[];
 }
 export type ConfidenceLevel = 'llm_derived' | 'user_verified' | 'owner_verified';
 export type SubscriptionTier = 'free' | 'premium';
-export type RestaurantSource = 'user_added' | 'area_scan' | 'imported';
+export type RestaurantSource = 'user_added' | 'area_scan' | 'imported' | 'seed';
 
 export interface DietaryTagRecord {
   id: number;
@@ -129,6 +130,7 @@ export interface ScanRestaurant {
   recommended_dishes: string[];
   warnings: string[];
   source_urls: string[];
+  menu_photo_urls: string[];
   created_at: string;
   // joined restaurant fields
   name: string;
@@ -149,6 +151,7 @@ export interface Scan {
   id: string;
   user_id: string;
   destination: string;
+  trip_name: string | null;
   country: string | null;
   dietary_tags: DietaryTag[];
   travel_dates_start: string | null;
