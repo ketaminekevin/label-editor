@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Label Overlay Tool</title>
+  <title>Label Overlay</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -11,172 +11,167 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
+    :root {
+      --bg: #f7f6f2;
+      --surface: #ffffff;
+      --border: #ececec;
+      --border-strong: #d4d4d4;
+      --text: #18181b;
+      --muted: #71717a;
+      --faint: #a1a1aa;
+      --accent: #18181b;
+      --ok: #16a34a;
+      --ok-bg: #f0fdf4;
+    }
     * { font-family: 'Inter', system-ui, sans-serif; }
-    body { background: #f0efe9; }
+    body { background: var(--bg); color: var(--text); }
 
-    .drop-zone { transition: background-color 0.15s, border-color 0.15s; }
-    .drop-zone.dragover { background-color: #eff6ff; border-color: #3b82f6; }
-    .drop-zone.has-file  { background-color: #f0fdf4; border-color: #22c55e; }
+    .surface { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+
+    .drop-zone {
+      transition: border-color 0.15s, background-color 0.15s;
+      background: var(--surface);
+      border: 1px dashed var(--border-strong);
+      border-radius: 10px;
+    }
+    .drop-zone.dragover { border-color: var(--accent); background: #fafaf8; }
+    .drop-zone.has-file { border-color: var(--ok); background: var(--ok-bg); border-style: solid; }
 
     #editor { display: block; touch-action: none; }
 
-    /* Type pill radio buttons */
     .type-btn span {
       display: block;
       padding: 3px 9px;
-      border: 1.5px solid #e5e7eb;
+      border: 1px solid var(--border-strong);
       border-radius: 5px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
-      color: #9ca3af;
+      color: var(--muted);
       transition: all 0.12s;
       user-select: none;
       white-space: nowrap;
-      letter-spacing: 0.02em;
     }
-    .type-btn span:hover { border-color: #9ca3af; color: #374151; }
+    .type-btn span:hover { border-color: var(--muted); color: var(--text); }
 
-    /* Per-type checked colors */
-    .type-btn[data-type="DOUBLE"] input:checked + span            { background: #4ade80; color: #14532d; border-color: #4ade80; }
-    .type-btn[data-type="SUBSCRIPTION"] input:checked + span      { background: #16a34a; color: #fff;    border-color: #16a34a; }
-    .type-btn[data-type="SINGLE"] input:checked + span            { background: #93c5fd; color: #1e3a8a; border-color: #93c5fd; }
-    .type-btn[data-type="SINGLE_SUBSCRIPTION"] input:checked + span { background: #2563eb; color: #fff; border-color: #2563eb; }
-    .type-btn[data-type="THREE"] input:checked + span             { background: #f472b6; color: #831843; border-color: #f472b6; }
-    .type-btn[data-type="FOUR"] input:checked + span              { background: #c084fc; color: #3b0764; border-color: #c084fc; }
-    .type-btn[data-type="CUSTOM"] input:checked + span            { background: #7c3aed; color: #fff;    border-color: #7c3aed; }
+    .type-btn[data-type="DOUBLE"] input:checked + span              { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .type-btn[data-type="SUBSCRIPTION"] input:checked + span        { background: #059669; color: #fff;    border-color: #059669; }
+    .type-btn[data-type="SINGLE"] input:checked + span              { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .type-btn[data-type="SINGLE_SUBSCRIPTION"] input:checked + span { background: #2563eb; color: #fff;    border-color: #2563eb; }
+    .type-btn[data-type="THREE"] input:checked + span               { background: #fce7f3; color: #9d174d; border-color: #fbcfe8; }
+    .type-btn[data-type="FOUR"] input:checked + span                { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+    .type-btn[data-type="CUSTOM"] input:checked + span              { background: #18181b; color: #fff;    border-color: #18181b; }
 
-    /* Bulk-set buttons */
     .bulk-btn {
-      font-size: 11px; font-weight: 600;
-      padding: 3px 10px;
-      border: 1.5px solid #e5e7eb; border-radius: 5px;
-      color: #9ca3af; background: white;
-      cursor: pointer; transition: all 0.12s;
-      letter-spacing: 0.02em;
-    }
-    .bulk-btn:hover { border-color: #9ca3af; color: #374151; }
-
-    /* Extracted address text */
-    .addr-lines { font-size: 12px; line-height: 1.55; color: #374151; min-width: 0; }
-    .addr-lines .line-name { font-weight: 700; color: #111827; }
-    .addr-lines .line-addr { color: #6b7280; }
-
-    /* Custom text input inside row */
-    .custom-input {
       font-size: 11px; font-weight: 500;
+      padding: 3px 10px;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      color: var(--muted); background: var(--surface);
+      cursor: pointer; transition: all 0.12s;
+    }
+    .bulk-btn:hover { border-color: var(--text); color: var(--text); }
+
+    .addr-lines { font-size: 12px; line-height: 1.5; color: var(--muted); min-width: 0; }
+    .addr-lines .line-name { font-weight: 600; color: var(--text); }
+    .addr-lines .line-addr { color: var(--muted); }
+
+    .custom-input {
+      font-size: 11px; font-weight: 400;
       padding: 3px 8px;
-      border: 1.5px solid #ddd6fe; border-radius: 5px;
-      color: #6d28d9; background: #faf5ff;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      color: var(--text); background: var(--surface);
       outline: none; width: 110px;
       transition: border-color 0.12s;
     }
-    .custom-input:focus { border-color: #7c3aed; }
-    .custom-input::placeholder { color: #c4b5fd; }
+    .custom-input:focus { border-color: var(--accent); }
+    .custom-input::placeholder { color: var(--faint); }
 
-    /* Page row */
     .page-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px; }
+    .page-row + .page-row { border-top: 1px solid #f4f4f4; }
     .page-row:hover { background: #fafaf8; }
 
+    .btn-primary {
+      background: var(--accent); color: #fff; font-weight: 500; font-size: 14px;
+      padding: 12px 16px; border-radius: 10px; width: 100%;
+      transition: opacity 0.15s;
+    }
+    .btn-primary:hover:not(:disabled) { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
-  <div class="max-w-4xl mx-auto space-y-5">
+  <div class="max-w-3xl mx-auto space-y-5">
 
     <!-- Header -->
-    <div class="text-center pt-4 pb-1">
-      <h1 class="text-3xl font-bold text-gray-900 tracking-tight">Label Overlay</h1>
-      <p class="text-gray-500 text-sm mt-1.5">Upload a shipping label PDF, position your logo, and export a sorted print file.</p>
+    <div class="pt-2 pb-1">
+      <h1 class="text-2xl font-semibold tracking-tight">Label Overlay</h1>
+      <p class="text-sm mt-1" style="color:var(--muted);">Upload a shipping label PDF, position your logo, and export a sorted print file.</p>
     </div>
 
     <!-- Upload Row -->
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-2 gap-3">
       <div>
-        <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Shipping Label PDF</p>
-        <div id="pdfZone"
-          class="drop-zone border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 bg-white"
+        <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Shipping label</p>
+        <div id="pdfZone" class="drop-zone px-4 py-5 text-center cursor-pointer"
           onclick="document.getElementById('pdfInput').click()">
           <input type="file" id="pdfInput" accept=".pdf,application/pdf" class="hidden" />
-          <div id="pdfZoneText">
-            <svg class="mx-auto mb-2 w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            <p class="text-sm text-gray-400">Drop PDF or <span class="text-blue-500 font-semibold">browse</span></p>
-          </div>
-          <p id="pdfZoneName" class="hidden text-sm text-green-600 font-semibold"></p>
+          <p id="pdfZoneText" class="text-sm" style="color:var(--muted);">Drop PDF or <span style="color:var(--text);font-weight:500;">browse</span></p>
+          <p id="pdfZoneName" class="hidden text-sm font-medium" style="color:var(--ok);"></p>
         </div>
       </div>
-
       <div>
-        <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Logo (PNG or JPG)</p>
-        <div id="logoZone"
-          class="drop-zone border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 bg-white"
+        <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Logo</p>
+        <div id="logoZone" class="drop-zone px-4 py-5 text-center cursor-pointer"
           onclick="document.getElementById('logoInput').click()">
           <input type="file" id="logoInput" accept="image/png,image/jpeg" class="hidden" />
           <div id="logoZoneText">
-            <svg class="mx-auto mb-2 w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-            </svg>
-            <p class="text-sm text-gray-400">Drop logo or <span class="text-blue-500 font-semibold">browse</span></p>
+            <p class="text-sm" style="color:var(--muted);">Drop image or <span style="color:var(--text);font-weight:500;">browse</span></p>
           </div>
-          <img id="logoThumb" class="hidden mx-auto max-h-10 rounded mt-1" alt="Logo preview" />
-          <p id="logoZoneName" class="hidden text-sm text-green-600 font-semibold mt-1"></p>
+          <img id="logoThumb" class="hidden mx-auto max-h-8 rounded" alt="" />
+          <p id="logoZoneName" class="hidden text-xs font-medium mt-1" style="color:var(--ok);"></p>
         </div>
       </div>
     </div>
 
-    <!-- Editor (shown after both files loaded) -->
-    <div id="editorSection" class="hidden bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-        <p class="text-sm font-semibold text-gray-800">Preview &amp; Editor</p>
-        <div class="flex items-center gap-4 text-xs text-gray-400">
-          <span><span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1 align-middle"></span>Blue corners = crop</span>
-          <span><span class="inline-block w-2 h-2 rounded-full bg-white border-2 border-gray-400 mr-1 align-middle"></span>White corner = resize logo</span>
-          <span>Drag logo to move</span>
-        </div>
+    <!-- Editor -->
+    <div id="editorSection" class="hidden surface overflow-hidden">
+      <div class="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border);">
+        <p class="text-sm font-medium">Crop &amp; logo position</p>
+        <span class="text-xs" style="color:var(--faint);">Drag corners to crop · drag logo to move</span>
       </div>
-      <div class="p-5 flex justify-center bg-gray-50">
-        <canvas id="editor" class="rounded-xl border border-gray-200 shadow-sm"></canvas>
+      <div class="p-4 flex justify-center" style="background:#fafaf8;">
+        <canvas id="editor" style="border:1px solid var(--border); border-radius:6px;"></canvas>
       </div>
     </div>
 
-    <!-- Action Section -->
+    <!-- Pages -->
     <div id="actionSection" class="hidden space-y-4">
-
-      <!-- Pages list -->
-      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div class="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
-          <p class="text-sm font-semibold text-gray-800">Label Pages</p>
-          <span id="pagesCount" class="text-xs font-semibold text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full"></span>
+      <div class="surface overflow-hidden">
+        <div class="px-4 py-2.5 flex items-center justify-between" style="border-bottom:1px solid var(--border);">
+          <p class="text-sm font-medium">Pages</p>
+          <span id="pagesCount" class="text-xs" style="color:var(--faint);"></span>
         </div>
 
-        <!-- Bulk-set row -->
-        <div id="pagesBulk" class="hidden px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center flex-wrap gap-1.5">
-          <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest shrink-0 mr-1">Set all:</span>
-          <button onclick="setAllTypes('DOUBLE')"              class="bulk-btn" style="color:#15803d;border-color:#bbf7d0;">Double</button>
-          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn" style="color:#fff;background:#16a34a;border-color:#16a34a;">D. Sub</button>
-          <button onclick="setAllTypes('SINGLE')"              class="bulk-btn" style="color:#1e40af;border-color:#bfdbfe;">Single</button>
-          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn" style="color:#fff;background:#2563eb;border-color:#2563eb;">S. Sub</button>
-          <button onclick="setAllTypes('THREE')"               class="bulk-btn" style="color:#831843;border-color:#fbcfe8;">Three</button>
-          <button onclick="setAllTypes('FOUR')"                class="bulk-btn" style="color:#3b0764;border-color:#e9d5ff;">Four</button>
-          <button onclick="setAllTypes('CUSTOM')"              class="bulk-btn" style="color:#7c3aed;border-color:#ddd6fe;">Custom</button>
+        <div id="pagesBulk" class="hidden px-4 py-2 flex items-center flex-wrap gap-1.5" style="border-bottom:1px solid var(--border); background:#fafaf8;">
+          <span class="text-xs font-medium mr-1" style="color:var(--faint);">Set all</span>
+          <button onclick="setAllTypes('DOUBLE')"              class="bulk-btn">Double</button>
+          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn">D. Sub</button>
+          <button onclick="setAllTypes('SINGLE')"              class="bulk-btn">Single</button>
+          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn">S. Sub</button>
+          <button onclick="setAllTypes('THREE')"               class="bulk-btn">Three</button>
+          <button onclick="setAllTypes('FOUR')"                class="bulk-btn">Four</button>
+          <button onclick="setAllTypes('CUSTOM')"              class="bulk-btn">Custom</button>
         </div>
 
-        <p id="pagesLoading" class="p-5 text-center text-sm text-gray-400">Rendering pages…</p>
-        <div id="pagesList" class="divide-y divide-gray-50"></div>
+        <p id="pagesLoading" class="p-5 text-center text-sm" style="color:var(--muted);">Rendering pages…</p>
+        <div id="pagesList"></div>
       </div>
 
-      <button id="exportBtn" onclick="exportPrintFile()"
-        class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-2xl transition-colors text-sm tracking-wide shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-        Export Print File
-      </button>
-
-      <p id="statusMsg" class="hidden text-center text-sm font-medium pb-1"></p>
+      <button id="exportBtn" onclick="exportPrintFile()" class="btn-primary">Export print file</button>
+      <p id="statusMsg" class="hidden text-center text-sm font-medium"></p>
     </div>
 
-    <p class="text-center text-xs text-gray-400 pb-4">Files are processed entirely in your browser — nothing is uploaded to any server.</p>
+    <p class="text-center text-xs pt-2 pb-4" style="color:var(--faint);">Processed entirely in your browser — nothing is uploaded.</p>
   </div>
 
 <script>
@@ -186,16 +181,16 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const HR       = 8;   // handle hit-radius px
-const MIN_CROP = 40;  // minimum crop side px
-const MIN_LOGO = 20;  // minimum logo width px
-const LOGO_PAD = 8;   // default padding when initialising logo position
+const HR       = 8;
+const MIN_CROP = 40;
+const MIN_LOGO = 20;
+const LOGO_PAD = 8;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const S = {
-  pdfBytes:   null,   // Uint8Array
+  pdfBytes:   null,
   pdfName:    '',
-  logoBytes:  null,   // Uint8Array
+  logoBytes:  null,
   logoType:   'png',
 
   pdfPageW:   0,
@@ -210,7 +205,6 @@ const S = {
   crop: { x: 0, y: 0, w: 0, h: 0 },
   drag: null,
 
-  // { type, thumb, addressLines, customText }
   pages: [],
 };
 
@@ -410,7 +404,7 @@ setupDropZone('pdfZone', 'pdfInput', async (file) => {
 
   document.getElementById('pdfZoneText').classList.add('hidden');
   const n = document.getElementById('pdfZoneName');
-  n.textContent = '✓ ' + file.name; n.classList.remove('hidden');
+  n.textContent = file.name; n.classList.remove('hidden');
   document.getElementById('pdfZone').classList.add('has-file');
 
   await renderPdfPreview();
@@ -434,7 +428,7 @@ setupDropZone('logoZone', 'logoInput', async (file) => {
   thumb.src = url; thumb.classList.remove('hidden');
   document.getElementById('logoZoneText').classList.add('hidden');
   const n = document.getElementById('logoZoneName');
-  n.textContent = '✓ ' + file.name; n.classList.remove('hidden');
+  n.textContent = file.name; n.classList.remove('hidden');
   document.getElementById('logoZone').classList.add('has-file');
 
   if (S.pdfBitmap) { initLogo(); render(); }
@@ -483,14 +477,14 @@ function checkReady() {
 }
 
 // ── Type definitions ──────────────────────────────────────────────────────────
-const DIVIDER_TEXT = {
-  DOUBLE:              '<- DOUBLES',
-  SUBSCRIPTION:        '<- DOUBLE SUBSCRIPTIONS',
-  SINGLE:              '<- SINGLES',
-  SINGLE_SUBSCRIPTION: '<- SINGLE SUBSCRIPTIONS',
-  THREE:               '<- TRIPLES',
-  FOUR:                '<- QUADRUPLES',
-  CUSTOM:              '<- CUSTOM',
+const TYPE_LABEL = {
+  DOUBLE:              'Doubles',
+  SUBSCRIPTION:        'D. Sub',
+  SINGLE:              'Singles',
+  SINGLE_SUBSCRIPTION: 'S. Sub',
+  THREE:               'Triples',
+  FOUR:                'Quadruples',
+  CUSTOM:              'Custom',
 };
 
 const SECTION_ORDER = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION', 'THREE', 'FOUR', 'CUSTOM'];
@@ -506,18 +500,12 @@ const PAGE_TYPE_OPTS = [
 ];
 
 // ── OCR-based text extraction ─────────────────────────────────────────────────
-/**
- * Render the right half of the label crop to a high-res canvas and run
- * Tesseract OCR on it. Returns an array of non-empty text lines.
- */
 async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
-  // Right half of the crop — this is where the address lives on NZ Post labels
   const srcX = cX + cW * 0.48;
   const srcY = cY;
   const srcW = cW * 0.52;
   const srcH = cH;
 
-  // Scale up 2× for OCR accuracy
   const scale = 2;
   const ocrCanvas = document.createElement('canvas');
   ocrCanvas.width  = Math.round(srcW * scale);
@@ -548,7 +536,6 @@ async function buildPagesList() {
   listEl.innerHTML = '';
   bulkEl.classList.add('hidden');
 
-  // Initialise one Tesseract worker for the whole batch
   const ocrWorker = await Tesseract.createWorker('eng');
 
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
@@ -560,35 +547,28 @@ async function buildPagesList() {
   }
 
   const THUMB_W = 72;
-  // Render pages at a higher scale for better OCR quality
   const OCR_SCALE = 2.5;
 
   for (let i = 1; i <= count; i++) {
     loadingEl.textContent = `OCR ${i} of ${count}…`;
 
     const page = await pdfDoc.getPage(i);
-    const raw  = page.getViewport({ scale: 1 });
-
-    // High-res render for OCR
     const vp   = page.getViewport({ scale: OCR_SCALE });
     const full = document.createElement('canvas');
     full.width  = Math.round(vp.width);
     full.height = Math.round(vp.height);
     await page.render({ canvasContext: full.getContext('2d'), viewport: vp }).promise;
 
-    // Map editor crop (canvas px) to this render's pixel space
     const f  = OCR_SCALE / S.scale;
     const cX = S.crop.x * f, cY = S.crop.y * f;
     const cW = S.crop.w * f, cH = S.crop.h * f;
 
-    // Thumbnail of the crop at display size
     const thumbH = Math.round(THUMB_W * cH / cW);
     const thumb  = document.createElement('canvas');
     thumb.width  = THUMB_W; thumb.height = thumbH;
     thumb.getContext('2d').drawImage(full, cX, cY, cW, cH, 0, 0, THUMB_W, thumbH);
     S.pages[i - 1].thumb = thumb;
 
-    // OCR the address region
     try {
       S.pages[i - 1].addressLines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
     } catch (_) {
@@ -611,26 +591,23 @@ function addPageRow(i) {
   row.className = 'page-row';
   row.id = `row_${i}`;
 
-  // ── Page number badge ──────────────────────────────────────────────────────
   const numEl = document.createElement('span');
-  numEl.className = 'text-xs font-bold text-gray-300 w-5 shrink-0 text-right pt-1';
+  numEl.className = 'text-xs font-medium w-5 shrink-0 text-right pt-1';
+  numEl.style.color = 'var(--faint)';
   numEl.textContent = i + 1;
   row.appendChild(numEl);
 
-  // ── Thumbnail ──────────────────────────────────────────────────────────────
   const tc = document.createElement('canvas');
   tc.width  = page.thumb.width;
   tc.height = page.thumb.height;
   tc.getContext('2d').drawImage(page.thumb, 0, 0);
-  tc.className = 'shrink-0 rounded border border-gray-200 shadow-sm';
-  tc.style.cssText = 'width:56px;height:auto;display:block;';
+  tc.style.cssText = 'width:56px;height:auto;display:block;border:1px solid var(--border);border-radius:3px;';
   row.appendChild(tc);
 
-  // ── Address text (searchable) ──────────────────────────────────────────────
   const addrBlock = document.createElement('div');
   addrBlock.className = 'addr-lines flex-1 min-w-0 pt-0.5';
 
-  const displayLines = page.addressLines.slice(1, 3); // line 2 = name, line 3 = street
+  const displayLines = page.addressLines.slice(1, 3);
   if (displayLines.length) {
     displayLines.forEach((line, li) => {
       const el = document.createElement('div');
@@ -647,7 +624,6 @@ function addPageRow(i) {
 
   row.appendChild(addrBlock);
 
-  // ── Type pills ─────────────────────────────────────────────────────────────
   const pillsWrap = document.createElement('div');
   pillsWrap.className = 'shrink-0 flex flex-col gap-1 items-end';
 
@@ -677,7 +653,6 @@ function addPageRow(i) {
 
   pillsWrap.appendChild(pills);
 
-  // Custom text input (shown when CUSTOM is selected)
   const customWrap = document.createElement('div');
   customWrap.id = `custom_wrap_${i}`;
   customWrap.className = 'mt-1';
@@ -717,52 +692,91 @@ async function exportPrintFile() {
   showStatus('Building print file…', 'info');
 
   try {
-    const toPdfX = (px) => px / S.scale;
+    const toPdf  = (px) => px / S.scale;
     const toPdfY = (py) => S.pdfPageH - py / S.scale;
 
-    const cropLeft   = toPdfX(S.crop.x);
+    const cropLeft   = toPdf(S.crop.x);
     const cropBottom = toPdfY(S.crop.y + S.crop.h);
-    const cropW      = toPdfX(S.crop.w);
-    const cropH      = toPdfX(S.crop.h);
+    const cropW      = toPdf(S.crop.w);
+    const cropH      = toPdf(S.crop.h);
 
     const lr    = getLogoRect();
-    const logoX = toPdfX(lr.x) - cropLeft;
+    const logoX = toPdf(lr.x) - cropLeft;
     const logoY = toPdfY(lr.y + lr.h) - cropBottom;
-    const logoW = toPdfX(lr.w);
-    const logoH = toPdfX(lr.h);
+    const logoW = toPdf(lr.w);
+    const logoH = toPdf(lr.h);
 
     const origPdf   = await PDFLib.PDFDocument.load(S.pdfBytes.slice());
     const origPages = origPdf.getPages();
     const newPdf    = await PDFLib.PDFDocument.create();
-    const divFont   = await newPdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const sumFont   = await newPdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
     const logoEmbed = S.logoType === 'png'
       ? await newPdf.embedPng(S.logoBytes.slice())
       : await newPdf.embedJpg(S.logoBytes.slice());
 
-    let totalProcessed = 0;
+    // Build summary — non-zero types in section order
+    const summary = [];
+    for (const type of SECTION_ORDER) {
+      const pagesOfType = S.pages.filter(p => p.type === type);
+      if (pagesOfType.length === 0) continue;
+      let label = TYPE_LABEL[type];
+      if (type === 'CUSTOM') {
+        const customName = pagesOfType.find(p => p.customText.trim())?.customText.trim();
+        if (customName) label = customName;
+      }
+      summary.push({ label, count: pagesOfType.length });
+    }
 
+    // Single cover page with the count list, auto-sized to fit
+    if (summary.length > 0) {
+      const coverPage = newPdf.addPage([cropW, cropH]);
+
+      const labelW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(it.label + ':', 1)));
+      const countW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(String(it.count), 1)));
+      const gapRatio        = 0.6;   // gap between label and count, as fraction of font size
+      const lineHeightRatio = 1.6;   // vertical spacing per line, as fraction of font size
+
+      const padH = cropW * 0.1;
+      const padV = cropH * 0.12;
+      const availW = cropW - padH * 2;
+      const availH = cropH - padV * 2;
+
+      const sizeByW = availW / (labelW1 + gapRatio + countW1);
+      const sizeByH = availH / (summary.length * lineHeightRatio);
+      const size = Math.min(sizeByW, sizeByH, 36);
+
+      const labelW = labelW1 * size;
+      const countW = countW1 * size;
+      const gapW = gapRatio * size;
+      const totalW = labelW + gapW + countW;
+      const startX = (cropW - totalW) / 2;
+
+      const lineHeight = size * lineHeightRatio;
+      const blockH = (summary.length - 1) * lineHeight;
+      const startY = cropH / 2 + blockH / 2 - size * 0.35;
+
+      summary.forEach((it, idx) => {
+        const y = startY - idx * lineHeight;
+        coverPage.drawText(it.label + ':', {
+          x: startX, y, font: sumFont, size,
+          color: PDFLib.rgb(0, 0, 0),
+        });
+        const cW = sumFont.widthOfTextAtSize(String(it.count), size);
+        coverPage.drawText(String(it.count), {
+          x: startX + totalW - cW, y,
+          font: sumFont, size,
+          color: PDFLib.rgb(0, 0, 0),
+        });
+      });
+    }
+
+    // Label pages — grouped by section order, no per-section dividers
+    let totalProcessed = 0;
     for (const type of SECTION_ORDER) {
       const indices = S.pages
         .map((p, i) => ({ type: p.type, i }))
         .filter(p => p.type === type)
         .map(p => p.i);
-
-      if (indices.length === 0) continue;
-
-      // Divider text: for CUSTOM, use first page's custom text if set
-      let divText = DIVIDER_TEXT[type];
-      if (type === 'CUSTOM') {
-        const firstCustom = S.pages[indices[0]];
-        if (firstCustom.customText.trim()) divText = '<- ' + firstCustom.customText.trim().toUpperCase();
-      }
-
-      const divSize  = Math.min(cropW / 7, 48);
-      const divTextW = divFont.widthOfTextAtSize(divText, divSize);
-      const divPage  = newPdf.addPage([cropW, cropH]);
-      divPage.drawText(divText, {
-        x: (cropW - divTextW) / 2, y: (cropH - divSize) / 2,
-        font: divFont, size: divSize, color: PDFLib.rgb(0, 0, 0),
-      });
 
       for (const idx of indices) {
         totalProcessed++;
@@ -782,7 +796,7 @@ async function exportPrintFile() {
     a.href = url; a.download = 'print-file.pdf'; a.click();
     URL.revokeObjectURL(url);
 
-    showStatus(`Done! ${totalProcessed} labels exported to print-file.pdf.`, 'success');
+    showStatus(`Done — ${totalProcessed} labels exported.`, 'success');
   } catch (err) {
     console.error(err);
     showStatus('Error: ' + err.message, 'error');
@@ -797,7 +811,7 @@ function showStatus(msg, type) {
   el.textContent = msg;
   el.className = 'text-center text-sm font-medium ' + (
     type === 'error'   ? 'text-red-500'   :
-    type === 'success' ? 'text-green-600' : 'text-blue-500'
+    type === 'success' ? 'text-green-600' : 'text-zinc-500'
   );
   el.classList.remove('hidden');
 }
