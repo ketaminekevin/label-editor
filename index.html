@@ -39,56 +39,141 @@
 
     #editor { display: block; touch-action: none; }
 
-    .type-btn span {
-      display: block;
-      padding: 3px 9px;
-      border: 1px solid var(--border-strong);
-      border-radius: 5px;
-      font-size: 11px;
-      font-weight: 500;
-      cursor: pointer;
-      color: var(--muted);
-      transition: all 0.12s;
-      user-select: none;
-      white-space: nowrap;
-    }
-    .type-btn span:hover { border-color: var(--muted); color: var(--text); }
-
-    .type-btn[data-type="DOUBLE"] input:checked + span              { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
-    .type-btn[data-type="SUBSCRIPTION"] input:checked + span        { background: #059669; color: #fff;    border-color: #059669; }
-    .type-btn[data-type="SINGLE"] input:checked + span              { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
-    .type-btn[data-type="SINGLE_SUBSCRIPTION"] input:checked + span { background: #2563eb; color: #fff;    border-color: #2563eb; }
-    .type-btn[data-type="THREE"] input:checked + span               { background: #fce7f3; color: #9d174d; border-color: #fbcfe8; }
-    .type-btn[data-type="FOUR"] input:checked + span                { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
-    .type-btn[data-type="CUSTOM"] input:checked + span              { background: #18181b; color: #fff;    border-color: #18181b; }
-
     .bulk-btn {
       font-size: 11px; font-weight: 500;
-      padding: 3px 10px;
-      border: 1px solid var(--border-strong); border-radius: 5px;
+      padding: 4px 10px;
+      border: 1px solid var(--border-strong); border-radius: 6px;
       color: var(--muted); background: var(--surface);
       cursor: pointer; transition: all 0.12s;
+      white-space: nowrap;
     }
     .bulk-btn:hover { border-color: var(--text); color: var(--text); }
 
-    .addr-lines { font-size: 12px; line-height: 1.5; color: var(--muted); min-width: 0; }
-    .addr-lines .line-name { font-weight: 600; color: var(--text); }
-    .addr-lines .line-addr { color: var(--muted); }
+    .page-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 18px;
+      transition: background 0.1s;
+    }
+    .page-row + .page-row { border-top: 1px solid #f4f4f4; }
+    .page-row:hover { background: #fafaf8; }
+
+    .page-num {
+      font-size: 11px; font-weight: 500;
+      color: var(--faint);
+      width: 22px; text-align: right;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .page-thumb {
+      width: 68px; height: auto;
+      flex-shrink: 0;
+      display: block;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+
+    .page-info { flex: 1; min-width: 0; }
+    .page-info .name {
+      font-size: 13px; font-weight: 600;
+      color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .page-info .addr {
+      font-size: 12px; color: var(--muted);
+      margin-top: 2px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .page-info .addr.empty { color: var(--faint); font-style: italic; }
+
+    .type-wrap { position: relative; flex-shrink: 0; }
+
+    .type-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 9px 5px 12px;
+      border: 1px solid var(--border-strong); border-radius: 6px;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      background: var(--surface); color: var(--text);
+      min-width: 150px;
+      justify-content: space-between;
+      transition: border-color 0.12s, box-shadow 0.12s;
+    }
+    .type-chip:hover { border-color: var(--muted); }
+    .type-chip:focus { outline: none; box-shadow: 0 0 0 2px rgba(24,24,27,0.1); }
+    .type-chip .chip-caret {
+      font-size: 10px; opacity: 0.6;
+      transition: transform 0.15s;
+    }
+    .type-chip.open .chip-caret { transform: rotate(180deg); }
+
+    .type-chip[data-type="DOUBLE"]              { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .type-chip[data-type="SUBSCRIPTION"]        { background: #059669; color: #fff;    border-color: #059669; }
+    .type-chip[data-type="SINGLE"]              { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .type-chip[data-type="SINGLE_SUBSCRIPTION"] { background: #2563eb; color: #fff;    border-color: #2563eb; }
+    .type-chip[data-type="THREE"]               { background: #fce7f3; color: #9d174d; border-color: #fbcfe8; }
+    .type-chip[data-type="FOUR"]                { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+    .type-chip[data-type="CUSTOM"]              { background: #18181b; color: #fff;    border-color: #18181b; }
+
+    .type-menu {
+      position: absolute; top: calc(100% + 4px); right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+      padding: 4px;
+      z-index: 20;
+      min-width: 180px;
+    }
+    .type-menu-item {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; text-align: left;
+      padding: 7px 10px;
+      font-size: 12px; font-weight: 500;
+      color: var(--text);
+      background: transparent;
+      border: none; border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.08s;
+    }
+    .type-menu-item:hover { background: #f4f4f5; }
+    .type-menu-item.active { background: var(--accent); color: #fff; }
+    .type-menu-item .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .type-menu-item[data-option="DOUBLE"] .dot              { background: #a7f3d0; }
+    .type-menu-item[data-option="SUBSCRIPTION"] .dot        { background: #059669; }
+    .type-menu-item[data-option="SINGLE"] .dot              { background: #bfdbfe; }
+    .type-menu-item[data-option="SINGLE_SUBSCRIPTION"] .dot { background: #2563eb; }
+    .type-menu-item[data-option="THREE"] .dot               { background: #fbcfe8; }
+    .type-menu-item[data-option="FOUR"] .dot                { background: #ddd6fe; }
+    .type-menu-item[data-option="CUSTOM"] .dot              { background: #18181b; }
 
     .custom-input {
-      font-size: 11px; font-weight: 400;
-      padding: 3px 8px;
+      font-size: 12px; font-weight: 400;
+      padding: 5px 8px;
       border: 1px solid var(--border-strong); border-radius: 5px;
       color: var(--text); background: var(--surface);
-      outline: none; width: 110px;
+      outline: none; width: 100%;
       transition: border-color 0.12s;
+      box-sizing: border-box;
     }
     .custom-input:focus { border-color: var(--accent); }
     .custom-input::placeholder { color: var(--faint); }
 
-    .page-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px; }
-    .page-row + .page-row { border-top: 1px solid #f4f4f4; }
-    .page-row:hover { background: #fafaf8; }
+    .custom-wrap {
+      padding: 6px 8px;
+      margin-top: 4px;
+      border-top: 1px solid var(--border);
+    }
+    .custom-wrap-label {
+      font-size: 10px; font-weight: 500;
+      color: var(--faint);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
 
     .btn-primary {
       background: var(--accent); color: #fff; font-weight: 500; font-size: 14px;
@@ -513,10 +598,13 @@ const PAGE_TYPE_OPTS = [
 
 // ── OCR-based text extraction ─────────────────────────────────────────────────
 async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
+  // NZ Post labels put the recipient block in the right column, roughly
+  // between 48% and 100% horizontally. The top ~8% is banner/strip, and
+  // the bottom ~15% is the sender/weight block.
   const srcX = cX + cW * 0.48;
-  const srcY = cY;
+  const srcY = cY + cH * 0.05;
   const srcW = cW * 0.52;
-  const srcH = cH;
+  const srcH = cH * 0.85;
 
   const scale = 2;
   const ocrCanvas = document.createElement('canvas');
@@ -532,7 +620,58 @@ async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
   return text
     .split('\n')
     .map(l => l.trim())
-    .filter(l => l.length > 2);
+    .filter(l => l.length > 0);
+}
+
+// Filter OCR noise and pull out the most likely name + street line.
+// NZ Post labels land in the address block with the recipient name as the
+// first mostly-uppercase multi-word line, followed by the street address.
+function extractAddress(rawLines) {
+  const cleaned = rawLines.filter(line => {
+    if (line.length < 3) return false;
+    const letters = (line.match(/[A-Za-z]/g) || []).length;
+    if (letters < 3) return false;
+    if (letters / line.length < 0.4) return false;
+    // Drop obvious metadata
+    if (/^(Ph|Phone|Tel|Fax|Mob)[:.\s]/i.test(line)) return false;
+    if (/NZ\s*Post|OVERNIGHT|NON[-\s]?SIGNATURE|SIGNATURE\s*REQUIRED|SATCHEL|PARCEL|COURIER|RURAL|DL\b/i.test(line)) return false;
+    if (/^[\d.]+\s*(kg|g|lbs?)\s*$/i.test(line)) return false;
+    if (/^\d+\s*of\s*\d+$/i.test(line)) return false;
+    return true;
+  }).map(line => line.replace(/[|{}\\[\]<>~`^]/g, '').replace(/\s+/g, ' ').trim())
+    .filter(l => l.length >= 3);
+
+  if (cleaned.length === 0) return { name: null, address: null };
+
+  // Name = first line that is mostly uppercase and has 2+ word-like tokens.
+  let nameIdx = -1;
+  for (let i = 0; i < cleaned.length; i++) {
+    const line = cleaned[i];
+    const letters = (line.match(/[A-Za-z]/g) || []).length;
+    const upper = (line.match(/[A-Z]/g) || []).length;
+    const words = line.split(/\s+/).filter(w => w.length > 1);
+    if (letters >= 4 && upper / letters > 0.65 && words.length >= 2) {
+      nameIdx = i;
+      break;
+    }
+  }
+
+  const name = nameIdx >= 0 ? cleaned[nameIdx] : cleaned[0];
+
+  // Address = first line after the name that starts with a number or
+  // contains a street suffix keyword.
+  const STREET_RE = /(ROAD|RD|STREET|ST|AVENUE|AVE|LANE|DRIVE|DR|PLACE|PL|CRESCENT|CRES|CR|COURT|CT|HIGHWAY|HWY|TERRACE|TCE|WAY|PARADE|PDE|CLOSE|GROVE|MEWS|QUAY|WALK|BOULEVARD|BLVD)\b/i;
+  let address = null;
+  for (let i = nameIdx + 1; i < cleaned.length; i++) {
+    const line = cleaned[i];
+    if (/^\d+[a-zA-Z]?[\s\-\/]/.test(line) || STREET_RE.test(line)) {
+      address = line;
+      break;
+    }
+  }
+  if (!address && nameIdx + 1 < cleaned.length) address = cleaned[nameIdx + 1];
+
+  return { name: name || null, address };
 }
 
 // ── Pages list ────────────────────────────────────────────────────────────────
@@ -595,6 +734,11 @@ async function buildPagesList() {
   bulkEl.classList.remove('hidden');
 }
 
+function getChipLabel(page) {
+  if (page.type === 'CUSTOM' && page.customText.trim()) return page.customText.trim();
+  return TYPE_LABEL[page.type] || 'Double';
+}
+
 function addPageRow(i) {
   const listEl = document.getElementById('pagesList');
   const page   = S.pages[i];
@@ -604,8 +748,7 @@ function addPageRow(i) {
   row.id = `row_${i}`;
 
   const numEl = document.createElement('span');
-  numEl.className = 'text-xs font-medium w-5 shrink-0 text-right pt-1';
-  numEl.style.color = 'var(--faint)';
+  numEl.className = 'page-num';
   numEl.textContent = i + 1;
   row.appendChild(numEl);
 
@@ -613,74 +756,111 @@ function addPageRow(i) {
   tc.width  = page.thumb.width;
   tc.height = page.thumb.height;
   tc.getContext('2d').drawImage(page.thumb, 0, 0);
-  tc.style.cssText = 'width:56px;height:auto;display:block;border:1px solid var(--border);border-radius:3px;';
+  tc.className = 'page-thumb';
   row.appendChild(tc);
 
-  const addrBlock = document.createElement('div');
-  addrBlock.className = 'addr-lines flex-1 min-w-0 pt-0.5';
+  const info = document.createElement('div');
+  info.className = 'page-info';
+  const extracted = extractAddress(page.addressLines);
 
-  const displayLines = page.addressLines.slice(1, 3);
-  if (displayLines.length) {
-    displayLines.forEach((line, li) => {
-      const el = document.createElement('div');
-      el.className = li === 0 ? 'line-name' : 'line-addr';
-      el.textContent = line;
-      addrBlock.appendChild(el);
-    });
+  const nameEl = document.createElement('div');
+  nameEl.className = 'name';
+  if (extracted.name) {
+    nameEl.textContent = extracted.name;
   } else {
-    const el = document.createElement('div');
-    el.className = 'line-addr italic';
-    el.textContent = 'No text extracted';
-    addrBlock.appendChild(el);
+    nameEl.textContent = 'Unreadable label';
+    nameEl.style.color = 'var(--faint)';
+    nameEl.style.fontStyle = 'italic';
+    nameEl.style.fontWeight = '500';
   }
+  info.appendChild(nameEl);
 
-  row.appendChild(addrBlock);
+  const addrEl = document.createElement('div');
+  if (extracted.address) {
+    addrEl.className = 'addr';
+    addrEl.textContent = extracted.address;
+  } else {
+    addrEl.className = 'addr empty';
+    addrEl.textContent = extracted.name ? 'No street address detected' : '—';
+  }
+  info.appendChild(addrEl);
 
-  const pillsWrap = document.createElement('div');
-  pillsWrap.className = 'shrink-0 flex flex-col gap-1 items-end';
+  row.appendChild(info);
 
-  const pills = document.createElement('div');
-  pills.className = 'flex flex-wrap gap-1 justify-end';
+  // Type chip + dropdown menu
+  const wrap = document.createElement('div');
+  wrap.className = 'type-wrap';
+
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'type-chip';
+  chip.dataset.type = page.type;
+  chip.innerHTML = `<span class="chip-label"></span><span class="chip-caret">▾</span>`;
+  chip.querySelector('.chip-label').textContent = getChipLabel(page);
+
+  const menu = document.createElement('div');
+  menu.className = 'type-menu hidden';
+  menu.addEventListener('click', (e) => e.stopPropagation());
 
   PAGE_TYPE_OPTS.forEach(opt => {
-    const label = document.createElement('label');
-    label.className = 'type-btn';
-    label.dataset.type = opt.value;
-    const inp = document.createElement('input');
-    inp.type  = 'radio';
-    inp.name  = `pt_${i}`;
-    inp.value = opt.value;
-    inp.className = 'sr-only';
-    inp.checked   = page.type === opt.value;
-    inp.addEventListener('change', () => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'type-menu-item';
+    item.dataset.option = opt.value;
+    item.innerHTML = `<span class="dot"></span><span></span>`;
+    item.querySelector('span:last-child').textContent = opt.label;
+    if (page.type === opt.value) item.classList.add('active');
+    item.addEventListener('click', () => {
       S.pages[i].type = opt.value;
+      chip.dataset.type = opt.value;
+      chip.querySelector('.chip-label').textContent = getChipLabel(S.pages[i]);
+      menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === opt.value));
       updateCustomInput(i);
+      if (opt.value !== 'CUSTOM') closeAllMenus();
     });
-    const span = document.createElement('span');
-    span.textContent = opt.label;
-    label.appendChild(inp);
-    label.appendChild(span);
-    pills.appendChild(label);
+    menu.appendChild(item);
   });
-
-  pillsWrap.appendChild(pills);
 
   const customWrap = document.createElement('div');
   customWrap.id = `custom_wrap_${i}`;
-  customWrap.className = 'mt-1';
+  customWrap.className = 'custom-wrap';
   customWrap.style.display = page.type === 'CUSTOM' ? 'block' : 'none';
-
+  const customLabel = document.createElement('div');
+  customLabel.className = 'custom-wrap-label';
+  customLabel.textContent = 'Section name';
+  customWrap.appendChild(customLabel);
   const customInp = document.createElement('input');
-  customInp.type        = 'text';
-  customInp.className   = 'custom-input';
-  customInp.placeholder = 'Section name…';
-  customInp.value       = page.customText || '';
-  customInp.addEventListener('input', (e) => { S.pages[i].customText = e.target.value; });
+  customInp.type = 'text';
+  customInp.className = 'custom-input';
+  customInp.placeholder = 'e.g. Gifts';
+  customInp.value = page.customText || '';
+  customInp.addEventListener('input', (e) => {
+    S.pages[i].customText = e.target.value;
+    chip.querySelector('.chip-label').textContent = getChipLabel(S.pages[i]);
+  });
   customWrap.appendChild(customInp);
-  pillsWrap.appendChild(customWrap);
+  menu.appendChild(customWrap);
 
-  row.appendChild(pillsWrap);
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = !menu.classList.contains('hidden');
+    closeAllMenus();
+    if (!wasOpen) {
+      menu.classList.remove('hidden');
+      chip.classList.add('open');
+    }
+  });
+
+  wrap.appendChild(chip);
+  wrap.appendChild(menu);
+  row.appendChild(wrap);
+
   listEl.appendChild(row);
+}
+
+function closeAllMenus() {
+  document.querySelectorAll('.type-menu').forEach(m => m.classList.add('hidden'));
+  document.querySelectorAll('.type-chip.open').forEach(c => c.classList.remove('open'));
 }
 
 function updateCustomInput(i) {
@@ -691,11 +871,23 @@ function updateCustomInput(i) {
 function setAllTypes(type) {
   S.pages.forEach((p, i) => {
     p.type = type;
-    const inp = document.querySelector(`input[name="pt_${i}"][value="${type}"]`);
-    if (inp) inp.checked = true;
+    const row = document.getElementById(`row_${i}`);
+    if (!row) return;
+    const chip = row.querySelector('.type-chip');
+    if (chip) {
+      chip.dataset.type = type;
+      chip.querySelector('.chip-label').textContent = getChipLabel(p);
+    }
+    const menu = row.querySelector('.type-menu');
+    if (menu) {
+      menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === type));
+    }
     updateCustomInput(i);
   });
+  closeAllMenus();
 }
+
+document.addEventListener('click', closeAllMenus);
 
 // ── Export print file ─────────────────────────────────────────────────────────
 async function exportPrintFile() {
@@ -725,62 +917,6 @@ async function exportPrintFile() {
     const logoEmbed = S.logoType === 'png'
       ? await newPdf.embedPng(S.logoBytes.slice())
       : await newPdf.embedJpg(S.logoBytes.slice());
-
-    // Build summary — non-zero types in section order
-    const summary = [];
-    for (const type of SECTION_ORDER) {
-      const pagesOfType = S.pages.filter(p => p.type === type);
-      if (pagesOfType.length === 0) continue;
-      let label = TYPE_LABEL_PLURAL[type];
-      if (type === 'CUSTOM') {
-        const customName = pagesOfType.find(p => p.customText.trim())?.customText.trim();
-        if (customName) label = customName;
-      }
-      summary.push({ label, count: pagesOfType.length });
-    }
-
-    // Single cover page with the count list, auto-sized to fit
-    if (summary.length > 0) {
-      const coverPage = newPdf.addPage([cropW, cropH]);
-
-      const labelW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(it.label + ':', 1)));
-      const countW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(String(it.count), 1)));
-      const gapRatio        = 0.6;   // gap between label and count, as fraction of font size
-      const lineHeightRatio = 1.6;   // vertical spacing per line, as fraction of font size
-
-      const padH = cropW * 0.1;
-      const padV = cropH * 0.12;
-      const availW = cropW - padH * 2;
-      const availH = cropH - padV * 2;
-
-      const sizeByW = availW / (labelW1 + gapRatio + countW1);
-      const sizeByH = availH / (summary.length * lineHeightRatio);
-      const size = Math.min(sizeByW, sizeByH, 36);
-
-      const labelW = labelW1 * size;
-      const countW = countW1 * size;
-      const gapW = gapRatio * size;
-      const totalW = labelW + gapW + countW;
-      const startX = (cropW - totalW) / 2;
-
-      const lineHeight = size * lineHeightRatio;
-      const blockH = (summary.length - 1) * lineHeight;
-      const startY = cropH / 2 + blockH / 2 - size * 0.35;
-
-      summary.forEach((it, idx) => {
-        const y = startY - idx * lineHeight;
-        coverPage.drawText(it.label + ':', {
-          x: startX, y, font: sumFont, size,
-          color: PDFLib.rgb(0, 0, 0),
-        });
-        const cW = sumFont.widthOfTextAtSize(String(it.count), size);
-        coverPage.drawText(String(it.count), {
-          x: startX + totalW - cW, y,
-          font: sumFont, size,
-          color: PDFLib.rgb(0, 0, 0),
-        });
-      });
-    }
 
     // Label pages — grouped by section order, with a minimal divider before each section
     let totalProcessed = 0;
@@ -855,6 +991,61 @@ async function exportPrintFile() {
         newPage.drawRectangle({ x: logoX, y: logoY, width: logoW, height: logoH, color: PDFLib.rgb(1, 1, 1) });
         newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
       }
+    }
+
+    // Summary sheet at the END — lists every non-empty type and its count
+    const summary = [];
+    for (const type of SECTION_ORDER) {
+      const pagesOfType = S.pages.filter(p => p.type === type);
+      if (pagesOfType.length === 0) continue;
+      let label = TYPE_LABEL_PLURAL[type];
+      if (type === 'CUSTOM') {
+        const customName = pagesOfType.find(p => p.customText.trim())?.customText.trim();
+        if (customName) label = customName;
+      }
+      summary.push({ label, count: pagesOfType.length });
+    }
+
+    if (summary.length > 0) {
+      const coverPage = newPdf.addPage([cropW, cropH]);
+
+      const labelW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(it.label + ':', 1)));
+      const countW1 = Math.max(...summary.map(it => sumFont.widthOfTextAtSize(String(it.count), 1)));
+      const gapRatio        = 0.6;
+      const lineHeightRatio = 1.6;
+
+      const padH = cropW * 0.1;
+      const padV = cropH * 0.12;
+      const availW = cropW - padH * 2;
+      const availH = cropH - padV * 2;
+
+      const sizeByW = availW / (labelW1 + gapRatio + countW1);
+      const sizeByH = availH / (summary.length * lineHeightRatio);
+      const size = Math.min(sizeByW, sizeByH, 36);
+
+      const labelW = labelW1 * size;
+      const countW = countW1 * size;
+      const gapW = gapRatio * size;
+      const totalW = labelW + gapW + countW;
+      const startX = (cropW - totalW) / 2;
+
+      const lineHeight = size * lineHeightRatio;
+      const blockH = (summary.length - 1) * lineHeight;
+      const startY = cropH / 2 + blockH / 2 - size * 0.35;
+
+      summary.forEach((it, idx) => {
+        const y = startY - idx * lineHeight;
+        coverPage.drawText(it.label + ':', {
+          x: startX, y, font: sumFont, size,
+          color: PDFLib.rgb(0, 0, 0),
+        });
+        const cW = sumFont.widthOfTextAtSize(String(it.count), size);
+        coverPage.drawText(String(it.count), {
+          x: startX + totalW - cW, y,
+          font: sumFont, size,
+          color: PDFLib.rgb(0, 0, 0),
+        });
+      });
     }
 
     const bytes = await newPdf.save();
