@@ -155,11 +155,11 @@
         <div id="pagesBulk" class="hidden px-4 py-2 flex items-center flex-wrap gap-1.5" style="border-bottom:1px solid var(--border); background:#fafaf8;">
           <span class="text-xs font-medium mr-1" style="color:var(--faint);">Set all</span>
           <button onclick="setAllTypes('DOUBLE')"              class="bulk-btn">Double</button>
-          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn">D. Sub</button>
+          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn">Double Subscription</button>
           <button onclick="setAllTypes('SINGLE')"              class="bulk-btn">Single</button>
-          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn">S. Sub</button>
-          <button onclick="setAllTypes('THREE')"               class="bulk-btn">Three</button>
-          <button onclick="setAllTypes('FOUR')"                class="bulk-btn">Four</button>
+          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn">Single Subscription</button>
+          <button onclick="setAllTypes('THREE')"               class="bulk-btn">Triple</button>
+          <button onclick="setAllTypes('FOUR')"                class="bulk-btn">Quadruple</button>
           <button onclick="setAllTypes('CUSTOM')"              class="bulk-btn">Custom</button>
         </div>
 
@@ -477,26 +477,38 @@ function checkReady() {
 }
 
 // ── Type definitions ──────────────────────────────────────────────────────────
-const TYPE_LABEL = {
+// Plural — used on the cover summary ("Doubles: 3")
+const TYPE_LABEL_PLURAL = {
   DOUBLE:              'Doubles',
-  SUBSCRIPTION:        'D. Sub',
+  SUBSCRIPTION:        'Double Subscriptions',
   SINGLE:              'Singles',
-  SINGLE_SUBSCRIPTION: 'S. Sub',
+  SINGLE_SUBSCRIPTION: 'Single Subscriptions',
   THREE:               'Triples',
   FOUR:                'Quadruples',
+  CUSTOM:              'Custom',
+};
+
+// Singular — used on section divider pages and in the UI
+const TYPE_LABEL = {
+  DOUBLE:              'Double',
+  SUBSCRIPTION:        'Double Subscription',
+  SINGLE:              'Single',
+  SINGLE_SUBSCRIPTION: 'Single Subscription',
+  THREE:               'Triple',
+  FOUR:                'Quadruple',
   CUSTOM:              'Custom',
 };
 
 const SECTION_ORDER = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION', 'THREE', 'FOUR', 'CUSTOM'];
 
 const PAGE_TYPE_OPTS = [
-  { value: 'DOUBLE',              label: 'Double', custom: false },
-  { value: 'SUBSCRIPTION',        label: 'D. Sub', custom: false },
-  { value: 'SINGLE',              label: 'Single', custom: false },
-  { value: 'SINGLE_SUBSCRIPTION', label: 'S. Sub', custom: false },
-  { value: 'THREE',               label: 'Three',  custom: false },
-  { value: 'FOUR',                label: 'Four',   custom: false },
-  { value: 'CUSTOM',              label: 'Custom', custom: true  },
+  { value: 'DOUBLE',              label: 'Double',              custom: false },
+  { value: 'SUBSCRIPTION',        label: 'Double Subscription', custom: false },
+  { value: 'SINGLE',              label: 'Single',              custom: false },
+  { value: 'SINGLE_SUBSCRIPTION', label: 'Single Subscription', custom: false },
+  { value: 'THREE',               label: 'Triple',              custom: false },
+  { value: 'FOUR',                label: 'Quadruple',           custom: false },
+  { value: 'CUSTOM',              label: 'Custom',              custom: true  },
 ];
 
 // ── OCR-based text extraction ─────────────────────────────────────────────────
@@ -719,7 +731,7 @@ async function exportPrintFile() {
     for (const type of SECTION_ORDER) {
       const pagesOfType = S.pages.filter(p => p.type === type);
       if (pagesOfType.length === 0) continue;
-      let label = TYPE_LABEL[type];
+      let label = TYPE_LABEL_PLURAL[type];
       if (type === 'CUSTOM') {
         const customName = pagesOfType.find(p => p.customText.trim())?.customText.trim();
         if (customName) label = customName;
@@ -780,7 +792,7 @@ async function exportPrintFile() {
 
       if (indices.length === 0) continue;
 
-      // Section divider — just the section name, centred
+      // Section divider — section name + left-pointing arrow underneath
       let divLabel = TYPE_LABEL[type];
       if (type === 'CUSTOM') {
         const customName = S.pages[indices[0]].customText.trim();
@@ -792,10 +804,45 @@ async function exportPrintFile() {
       const divW1 = sumFont.widthOfTextAtSize(divLabel, 1);
       const divSize = Math.min(divAvailW / divW1, cropH * 0.2, 48);
       const divTextW = sumFont.widthOfTextAtSize(divLabel, divSize);
+
+      // Stack: label above, arrow centred below
+      const gap = divSize * 0.6;
+      const arrowLen = Math.min(cropW * 0.35, divTextW * 1.1);
+      const arrowHead = divSize * 0.45;
+      const arrowThickness = Math.max(divSize * 0.08, 1.5);
+      const stackH = divSize + gap + arrowHead;  // top of text to tip of head
+      const stackTop = cropH / 2 + stackH / 2;
+
+      const textBaseline = stackTop - divSize * 0.8;
       divPage.drawText(divLabel, {
         x: (cropW - divTextW) / 2,
-        y: (cropH - divSize * 0.7) / 2,
+        y: textBaseline,
         font: sumFont, size: divSize,
+        color: PDFLib.rgb(0, 0, 0),
+      });
+
+      const shaftY = textBaseline - gap - arrowHead / 2;
+      const ax1 = (cropW - arrowLen) / 2;
+      const ax2 = ax1 + arrowLen;
+      const headBase = ax1 + arrowHead * Math.cos(Math.PI / 6);
+      const headHalf = arrowHead * Math.sin(Math.PI / 6);
+
+      divPage.drawLine({
+        start: { x: headBase, y: shaftY },
+        end:   { x: ax2,      y: shaftY },
+        thickness: arrowThickness,
+        color: PDFLib.rgb(0, 0, 0),
+      });
+      divPage.drawLine({
+        start: { x: ax1,      y: shaftY },
+        end:   { x: headBase, y: shaftY + headHalf },
+        thickness: arrowThickness,
+        color: PDFLib.rgb(0, 0, 0),
+      });
+      divPage.drawLine({
+        start: { x: ax1,      y: shaftY },
+        end:   { x: headBase, y: shaftY - headHalf },
+        thickness: arrowThickness,
         color: PDFLib.rgb(0, 0, 0),
       });
 
