@@ -770,13 +770,34 @@ async function exportPrintFile() {
       });
     }
 
-    // Label pages — grouped by section order, no per-section dividers
+    // Label pages — grouped by section order, with a minimal divider before each section
     let totalProcessed = 0;
     for (const type of SECTION_ORDER) {
       const indices = S.pages
         .map((p, i) => ({ type: p.type, i }))
         .filter(p => p.type === type)
         .map(p => p.i);
+
+      if (indices.length === 0) continue;
+
+      // Section divider — just the section name, centred
+      let divLabel = TYPE_LABEL[type];
+      if (type === 'CUSTOM') {
+        const customName = S.pages[indices[0]].customText.trim();
+        if (customName) divLabel = customName;
+      }
+
+      const divPage = newPdf.addPage([cropW, cropH]);
+      const divAvailW = cropW * 0.8;
+      const divW1 = sumFont.widthOfTextAtSize(divLabel, 1);
+      const divSize = Math.min(divAvailW / divW1, cropH * 0.2, 48);
+      const divTextW = sumFont.widthOfTextAtSize(divLabel, divSize);
+      divPage.drawText(divLabel, {
+        x: (cropW - divTextW) / 2,
+        y: (cropH - divSize * 0.7) / 2,
+        font: sumFont, size: divSize,
+        color: PDFLib.rgb(0, 0, 0),
+      });
 
       for (const idx of indices) {
         totalProcessed++;
