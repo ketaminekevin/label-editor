@@ -123,7 +123,11 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
       padding: 4px;
       z-index: 20;
-      min-width: 180px;
+      min-width: 200px;
+    }
+    .type-menu.flip-up {
+      top: auto;
+      bottom: calc(100% + 4px);
     }
     .type-menu-item {
       display: flex; align-items: center; gap: 8px;
@@ -231,8 +235,8 @@
 
     <!-- Pages -->
     <div id="actionSection" class="hidden space-y-4">
-      <div class="surface overflow-hidden">
-        <div class="px-4 py-2.5 flex items-center justify-between" style="border-bottom:1px solid var(--border);">
+      <div class="surface">
+        <div class="px-4 py-2.5 flex items-center justify-between" style="border-bottom:1px solid var(--border); border-radius:12px 12px 0 0;">
           <p class="text-sm font-medium">Pages</p>
           <span id="pagesCount" class="text-xs" style="color:var(--faint);"></span>
         </div>
@@ -846,8 +850,13 @@ function addPageRow(i) {
     const wasOpen = !menu.classList.contains('hidden');
     closeAllMenus();
     if (!wasOpen) {
-      menu.classList.remove('hidden');
+      menu.classList.remove('hidden', 'flip-up');
       chip.classList.add('open');
+      // Flip above the chip if it would fall off the bottom of the viewport
+      const rect = menu.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 8) {
+        menu.classList.add('flip-up');
+      }
     }
   });
 
