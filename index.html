@@ -600,15 +600,60 @@ const PAGE_TYPE_OPTS = [
   { value: 'CUSTOM',              label: 'Custom',              custom: true  },
 ];
 
-// ── OCR-based text extraction ─────────────────────────────────────────────────
+// ── Text extraction ───────────────────────────────────────────────────────────
+// Most courier label PDFs are digitally generated and carry a real text layer.
+// Reading that layer is dramatically more accurate than OCR'ing a rasterised
+// image. We pull only items whose viewport position falls inside the recipient
+// block (right column, top half of the crop) and cluster them into lines by Y.
+async function extractTextRegion(pdfPage, vpScale, cX, cY, cW, cH) {
+  const vp = pdfPage.getViewport({ scale: vpScale });
+  let tc;
+  try { tc = await pdfPage.getTextContent(); } catch (_) { return []; }
+  if (!tc || !tc.items || !tc.items.length) return [];
+
+  const minX = cX + cW * 0.50;
+  const maxX = cX + cW;
+  const minY = cY + cH * 0.07;
+  const maxY = cY + cH * 0.55;
+
+  const items = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const [vx, vy] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+    if (vx < minX || vx > maxX || vy < minY || vy > maxY) continue;
+    items.push({ str: it.str, x: vx, y: vy });
+  }
+  if (!items.length) return [];
+
+  // Cluster items into lines by Y position. Tolerance scales with viewport.
+  const tol = Math.max(4, vpScale * 2);
+  items.sort((a, b) => a.y - b.y || a.x - b.x);
+  const lines = [];
+  for (const it of items) {
+    const last = lines[lines.length - 1];
+    if (last && Math.abs(it.y - last.y) < tol) {
+      last.items.push(it);
+    } else {
+      lines.push({ y: it.y, items: [it] });
+    }
+  }
+
+  return lines
+    .map(l => l.items.sort((a, b) => a.x - b.x).map(i => i.str).join(' '))
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(s => s.length > 0);
+}
+
+// OCR fallback for raster-only labels.
 async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
-  // NZ Post labels put the recipient block in the right column, roughly
-  // between 48% and 100% horizontally. The top ~8% is banner/strip, and
-  // the bottom ~15% is the sender/weight block.
-  const srcX = cX + cW * 0.48;
-  const srcY = cY + cH * 0.05;
-  const srcW = cW * 0.52;
-  const srcH = cH * 0.85;
+  // NZ Post labels put the recipient block in the top-right quadrant. Anything
+  // wider than 50% horizontal catches the right edge of the datamatrix barcode
+  // (which OCRs as random 1-3 character garbage). Anything below 55% vertical
+  // catches the static sender block in the lower-right.
+  const srcX = cX + cW * 0.50;
+  const srcY = cY + cH * 0.07;
+  const srcW = cW * 0.50;
+  const srcH = cH * 0.48;
 
   const scale = 2;
   const ocrCanvas = document.createElement('canvas');
@@ -627,17 +672,41 @@ async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
     .filter(l => l.length > 0);
 }
 
+// Strip noise that bleeds into OCR'd lines: trailing phone numbers and short
+// leading garbage tokens (e.g., "HL ", "vise ", "A% ", "ik ") picked up from
+// the datamatrix or label chrome.
+function preCleanLine(line) {
+  // Drop trailing phone numbers like " Ph: +64211135845" / "Ph. 02102..."
+  line = line.replace(/\s+Ph[:.\s]+[\d\s+\-()]+$/i, '');
+  // Strip up to two leading short tokens that don't look like real address starts.
+  for (let i = 0; i < 2; i++) {
+    const m = line.match(/^(\S{1,3})\s+(.+)$/);
+    if (!m) break;
+    const [, prefix, rest] = m;
+    if (/^(RD|PO|MR|MRS|DR|MS|MX|ST|LT|RR)$/i.test(prefix)) break;
+    // Drop if prefix has non-letters, OR the remainder begins with a digit
+    // (street number) or a multi-letter uppercase word (proper noun).
+    if (/[^A-Za-z]/.test(prefix) || /^\d/.test(rest) || /^[A-Z]{2,}/.test(rest)) {
+      line = rest;
+    } else {
+      break;
+    }
+  }
+  return line.trim();
+}
+
 // Filter OCR noise and pull out the most likely name + street line.
 // NZ Post labels land in the address block with the recipient name as the
 // first mostly-uppercase multi-word line, followed by the street address.
 function extractAddress(rawLines) {
-  const cleaned = rawLines.filter(line => {
+  const cleaned = rawLines.map(preCleanLine).filter(line => {
     if (line.length < 3) return false;
     const letters = (line.match(/[A-Za-z]/g) || []).length;
     if (letters < 3) return false;
     if (letters / line.length < 0.4) return false;
     // Drop obvious metadata
     if (/^(Ph|Phone|Tel|Fax|Mob)[:.\s]/i.test(line)) return false;
+    if (/^(From|Contact|Generated|Cust\s*Ref)[:.\s]/i.test(line)) return false;
     if (/NZ\s*Post|OVERNIGHT|NON[-\s]?SIGNATURE|SIGNATURE\s*REQUIRED|SATCHEL|PARCEL|COURIER|RURAL|DL\b/i.test(line)) return false;
     if (/^[\d.]+\s*(kg|g|lbs?)\s*$/i.test(line)) return false;
     if (/^\d+\s*of\s*\d+$/i.test(line)) return false;
@@ -705,7 +774,7 @@ async function buildPagesList() {
   const OCR_SCALE = 2.5;
 
   for (let i = 1; i <= count; i++) {
-    loadingEl.textContent = `OCR ${i} of ${count}…`;
+    loadingEl.textContent = `Reading ${i} of ${count}…`;
 
     const page = await pdfDoc.getPage(i);
     const vp   = page.getViewport({ scale: OCR_SCALE });
@@ -725,7 +794,14 @@ async function buildPagesList() {
     S.pages[i - 1].thumb = thumb;
 
     try {
-      S.pages[i - 1].addressLines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
+      // Prefer the digital text layer. Fall back to OCR only when the layer
+      // is missing or sparse (e.g., scanned/rasterised labels).
+      let lines = await extractTextRegion(page, OCR_SCALE, cX, cY, cW, cH);
+      if (lines.length < 2) {
+        loadingEl.textContent = `OCR ${i} of ${count}…`;
+        lines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
+      }
+      S.pages[i - 1].addressLines = lines;
     } catch (_) {
       S.pages[i - 1].addressLines = [];
     }
