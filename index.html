@@ -356,8 +356,6 @@ function render() {
 
   if (logoImg.complete && logoImg.naturalWidth) {
     const lr = getLogoRect();
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(lr.x, lr.y, lr.w, lr.h);
     ctx.drawImage(logoImg, lr.x, lr.y, lr.w, lr.h);
 
     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
@@ -552,10 +550,18 @@ async function renderPdfPreview() {
 }
 
 function initLogo() {
-  S.logoW = clamp(Math.round(S.crop.w * 0.25), MIN_LOGO, S.crop.w - 2 * LOGO_PAD);
+  // Auto-fit the image to the crop, preserving aspect ratio. When the image
+  // dimensions match the crop (e.g. a full-label overlay designed at the same
+  // size), this gives a 1:1 placement with no scaling.
+  const cropAspect = S.crop.w / S.crop.h;
+  S.logoW = S.logoAspect >= cropAspect
+    ? S.crop.w
+    : S.crop.h * S.logoAspect;
+  S.logoW = Math.max(MIN_LOGO, S.logoW);
   const h = S.logoW / S.logoAspect;
-  S.logoX = S.crop.x + S.crop.w - S.logoW - LOGO_PAD;
-  S.logoY = S.crop.y + S.crop.h - h      - LOGO_PAD;
+  // Center inside the crop.
+  S.logoX = S.crop.x + (S.crop.w - S.logoW) / 2;
+  S.logoY = S.crop.y + (S.crop.h - h) / 2;
 }
 
 function checkReady() {
@@ -1073,7 +1079,6 @@ async function exportPrintFile() {
         const [embedded] = await newPdf.embedPages([origPages[idx]]);
         const newPage    = newPdf.addPage([cropW, cropH]);
         newPage.drawPage(embedded, { x: -cropLeft, y: -cropBottom, width: S.pdfPageW, height: S.pdfPageH });
-        newPage.drawRectangle({ x: logoX, y: logoY, width: logoW, height: logoH, color: PDFLib.rgb(1, 1, 1) });
         newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
       }
     }
