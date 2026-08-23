@@ -85,6 +85,15 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .page-info .addr.empty { color: var(--faint); font-style: italic; }
+    .csv-tag {
+      display: inline-block;
+      font-size: 10px; font-weight: 600;
+      padding: 1px 6px; border-radius: 4px;
+      margin-left: 6px; vertical-align: middle;
+      letter-spacing: 0.02em;
+    }
+    .csv-tag.ok    { background: var(--ok-bg); color: var(--ok); }
+    .csv-tag.check { background: #fff7ed; color: #c2410c; }
 
     .type-wrap { position: relative; flex-shrink: 0; }
 
@@ -107,13 +116,15 @@
     }
     .type-chip.open .chip-caret { transform: rotate(180deg); }
 
-    .type-chip[data-type="DOUBLE"]              { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
-    .type-chip[data-type="SUBSCRIPTION"]        { background: #059669; color: #fff;    border-color: #059669; }
-    .type-chip[data-type="SINGLE"]              { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
-    .type-chip[data-type="SINGLE_SUBSCRIPTION"] { background: #2563eb; color: #fff;    border-color: #2563eb; }
-    .type-chip[data-type="THREE"]               { background: #fce7f3; color: #9d174d; border-color: #fbcfe8; }
-    .type-chip[data-type="FOUR"]                { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
-    .type-chip[data-type="CUSTOM"]              { background: #18181b; color: #fff;    border-color: #18181b; }
+    .type-chip[data-type="DOUBLE"]      { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .type-chip[data-type="SUB_D_FIRST"] { background: #059669; color: #fff;    border-color: #059669; }
+    .type-chip[data-type="SUB_D_RECUR"] { background: #0d9488; color: #fff;    border-color: #0d9488; }
+    .type-chip[data-type="SINGLE"]      { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .type-chip[data-type="SUB_S_FIRST"] { background: #2563eb; color: #fff;    border-color: #2563eb; }
+    .type-chip[data-type="SUB_S_RECUR"] { background: #4f46e5; color: #fff;    border-color: #4f46e5; }
+    .type-chip[data-type="THREE"]       { background: #fce7f3; color: #9d174d; border-color: #fbcfe8; }
+    .type-chip[data-type="FOUR"]        { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+    .type-chip[data-type="CUSTOM"]      { background: #18181b; color: #fff;    border-color: #18181b; }
 
     .type-menu {
       position: absolute; top: calc(100% + 4px); right: 0;
@@ -146,13 +157,15 @@
       width: 8px; height: 8px; border-radius: 50%;
       flex-shrink: 0;
     }
-    .type-menu-item[data-option="DOUBLE"] .dot              { background: #a7f3d0; }
-    .type-menu-item[data-option="SUBSCRIPTION"] .dot        { background: #059669; }
-    .type-menu-item[data-option="SINGLE"] .dot              { background: #bfdbfe; }
-    .type-menu-item[data-option="SINGLE_SUBSCRIPTION"] .dot { background: #2563eb; }
-    .type-menu-item[data-option="THREE"] .dot               { background: #fbcfe8; }
-    .type-menu-item[data-option="FOUR"] .dot                { background: #ddd6fe; }
-    .type-menu-item[data-option="CUSTOM"] .dot              { background: #18181b; }
+    .type-menu-item[data-option="DOUBLE"] .dot      { background: #a7f3d0; }
+    .type-menu-item[data-option="SUB_D_FIRST"] .dot { background: #059669; }
+    .type-menu-item[data-option="SUB_D_RECUR"] .dot { background: #0d9488; }
+    .type-menu-item[data-option="SINGLE"] .dot      { background: #bfdbfe; }
+    .type-menu-item[data-option="SUB_S_FIRST"] .dot { background: #2563eb; }
+    .type-menu-item[data-option="SUB_S_RECUR"] .dot { background: #4f46e5; }
+    .type-menu-item[data-option="THREE"] .dot       { background: #fbcfe8; }
+    .type-menu-item[data-option="FOUR"] .dot        { background: #ddd6fe; }
+    .type-menu-item[data-option="CUSTOM"] .dot      { background: #18181b; }
 
     .custom-input {
       font-size: 12px; font-weight: 400;
@@ -194,17 +207,17 @@
     <!-- Header -->
     <div class="pt-2 pb-1">
       <h1 class="text-2xl font-semibold tracking-tight">Label Overlay</h1>
-      <p class="text-sm mt-1" style="color:var(--muted);">Upload a shipping label PDF, position your logo, and export a sorted print file.</p>
+      <p class="text-sm mt-1" style="color:var(--muted);">Upload one or more label PDFs, drop in your orders CSV to auto-sort by type, position your logo, and export a print-ready file.</p>
     </div>
 
     <!-- Upload Row -->
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Shipping label</p>
+        <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Shipping labels</p>
         <div id="pdfZone" class="drop-zone px-4 py-5 text-center cursor-pointer"
           onclick="document.getElementById('pdfInput').click()">
-          <input type="file" id="pdfInput" accept=".pdf,application/pdf" class="hidden" />
-          <p id="pdfZoneText" class="text-sm" style="color:var(--muted);">Drop PDF or <span style="color:var(--text);font-weight:500;">browse</span></p>
+          <input type="file" id="pdfInput" accept=".pdf,application/pdf" multiple class="hidden" />
+          <p id="pdfZoneText" class="text-sm" style="color:var(--muted);">Drop PDF(s) or <span style="color:var(--text);font-weight:500;">browse</span></p>
           <p id="pdfZoneName" class="hidden text-sm font-medium" style="color:var(--ok);"></p>
         </div>
       </div>
@@ -219,6 +232,17 @@
           <img id="logoThumb" class="hidden mx-auto max-h-8 rounded" alt="" />
           <p id="logoZoneName" class="hidden text-xs font-medium mt-1" style="color:var(--ok);"></p>
         </div>
+      </div>
+    </div>
+
+    <!-- Orders CSV (optional) -->
+    <div>
+      <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Orders CSV <span style="font-weight:400;">— optional, auto-tags each label</span></p>
+      <div id="csvZone" class="drop-zone px-4 py-4 text-center cursor-pointer"
+        onclick="document.getElementById('csvInput').click()">
+        <input type="file" id="csvInput" accept=".csv,text/csv" class="hidden" />
+        <p id="csvZoneText" class="text-sm" style="color:var(--muted);">Drop <span style="color:var(--text);font-weight:500;">orders_export.csv</span> to auto-detect single / double / subscription / first-order</p>
+        <p id="csvZoneName" class="hidden text-sm font-medium" style="color:var(--ok);"></p>
       </div>
     </div>
 
@@ -243,13 +267,11 @@
 
         <div id="pagesBulk" class="hidden px-4 py-2 flex items-center flex-wrap gap-1.5" style="border-bottom:1px solid var(--border); background:#fafaf8;">
           <span class="text-xs font-medium mr-1" style="color:var(--faint);">Set all</span>
-          <button onclick="setAllTypes('DOUBLE')"              class="bulk-btn">Double</button>
-          <button onclick="setAllTypes('SUBSCRIPTION')"        class="bulk-btn">Double Subscription</button>
-          <button onclick="setAllTypes('SINGLE')"              class="bulk-btn">Single</button>
-          <button onclick="setAllTypes('SINGLE_SUBSCRIPTION')" class="bulk-btn">Single Subscription</button>
-          <button onclick="setAllTypes('THREE')"               class="bulk-btn">Triple</button>
-          <button onclick="setAllTypes('FOUR')"                class="bulk-btn">Quadruple</button>
-          <button onclick="setAllTypes('CUSTOM')"              class="bulk-btn">Custom</button>
+          <button onclick="setAllTypes('DOUBLE')" class="bulk-btn">Double</button>
+          <button onclick="setAllTypes('SINGLE')" class="bulk-btn">Single</button>
+          <button onclick="setAllTypes('THREE')"  class="bulk-btn">Triple</button>
+          <button onclick="setAllTypes('FOUR')"   class="bulk-btn">Quadruple</button>
+          <button onclick="setAllTypes('CUSTOM')" class="bulk-btn">Custom</button>
         </div>
 
         <p id="pagesLoading" class="p-5 text-center text-sm" style="color:var(--muted);">Rendering pages…</p>
@@ -295,6 +317,7 @@ const S = {
   drag: null,
 
   pages: [],
+  orders: null,   // parsed orders_export.csv rows (or null)
 };
 
 const canvas = document.getElementById('editor');
@@ -468,35 +491,59 @@ canvas.addEventListener('touchmove', (e) => {
 canvas.addEventListener('touchend', () => { S.drag = null; });
 
 // ── Drop zone setup ───────────────────────────────────────────────────────────
-function setupDropZone(zoneId, inputId, handler) {
+function setupDropZone(zoneId, inputId, handler, multi) {
   const zone = document.getElementById(zoneId);
   zone.addEventListener('dragover',  (e) => { e.preventDefault(); zone.classList.add('dragover'); });
   zone.addEventListener('dragleave', ()  => zone.classList.remove('dragover'));
   zone.addEventListener('drop', (e) => {
     e.preventDefault(); zone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0]; if (f) handler(f);
+    const files = [...e.dataTransfer.files]; if (!files.length) return;
+    multi ? handler(files) : handler(files[0]);
   });
   document.getElementById(inputId).addEventListener('change', (e) => {
-    const f = e.target.files[0]; if (f) handler(f);
+    const files = [...e.target.files]; if (!files.length) return;
+    multi ? handler(files) : handler(files[0]);
   });
 }
 
-// ── PDF handler ───────────────────────────────────────────────────────────────
-setupDropZone('pdfZone', 'pdfInput', async (file) => {
-  if (!file.name.endsWith('.pdf') && file.type !== 'application/pdf')
-    return showStatus('Please upload a PDF file.', 'error');
+// Merge several PDFs into one document so the rest of the pipeline (preview,
+// OCR, export) can treat the whole batch as a single page set.
+async function mergePdfs(files) {
+  const merged = await PDFLib.PDFDocument.create();
+  for (const file of files) {
+    const bytes  = new Uint8Array(await file.arrayBuffer());
+    const doc    = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+    const copied = await merged.copyPages(doc, doc.getPageIndices());
+    copied.forEach(p => merged.addPage(p));
+  }
+  return new Uint8Array(await merged.save());
+}
 
-  S.pdfBytes = new Uint8Array(await file.arrayBuffer());
-  S.pdfName  = file.name;
+// ── PDF handler (accepts one or many, combined in upload order) ────────────────
+setupDropZone('pdfZone', 'pdfInput', async (files) => {
+  const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf');
+  if (!pdfs.length) return showStatus('Please upload PDF file(s).', 'error');
+
+  showStatus(pdfs.length > 1 ? `Merging ${pdfs.length} PDFs…` : 'Loading PDF…', 'info');
+  try {
+    S.pdfBytes = pdfs.length === 1
+      ? new Uint8Array(await pdfs[0].arrayBuffer())
+      : await mergePdfs(pdfs);
+  } catch (err) {
+    console.error(err);
+    return showStatus('Could not read PDF: ' + err.message, 'error');
+  }
+  S.pdfName = pdfs.length === 1 ? pdfs[0].name : `${pdfs.length} files combined`;
 
   document.getElementById('pdfZoneText').classList.add('hidden');
   const n = document.getElementById('pdfZoneName');
-  n.textContent = file.name; n.classList.remove('hidden');
+  n.textContent = pdfs.length === 1 ? pdfs[0].name : `${pdfs[0].name} + ${pdfs.length - 1} more`;
+  n.classList.remove('hidden');
   document.getElementById('pdfZone').classList.add('has-file');
 
   await renderPdfPreview();
   checkReady();
-});
+}, true);
 
 // ── Logo handler ──────────────────────────────────────────────────────────────
 setupDropZone('logoZone', 'logoInput', async (file) => {
@@ -521,6 +568,155 @@ setupDropZone('logoZone', 'logoInput', async (file) => {
   if (S.pdfBitmap) { initLogo(); render(); }
   checkReady();
 });
+
+// ── Orders CSV handler ────────────────────────────────────────────────────────
+setupDropZone('csvZone', 'csvInput', async (file) => {
+  if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv' && file.type !== 'application/vnd.ms-excel')
+    return showStatus('Please upload a Shopify orders_export.csv file.', 'error');
+
+  let orders;
+  try {
+    orders = parseOrdersCsv(await file.text());
+  } catch (err) {
+    console.error(err);
+    return showStatus('Could not read CSV: ' + err.message, 'error');
+  }
+  if (!orders.length) return showStatus('No orders found in that CSV.', 'error');
+
+  S.orders = orders;
+  document.getElementById('csvZoneText').classList.add('hidden');
+  const n = document.getElementById('csvZoneName');
+  n.textContent = `${file.name} — ${orders.length} orders`;
+  n.classList.remove('hidden');
+  document.getElementById('csvZone').classList.add('has-file');
+
+  if (S.pages.length) applyCsvTypes();
+  else showStatus(`Loaded ${orders.length} orders — upload labels to auto-tag them.`, 'info');
+}, false);
+
+// RFC-4180-ish CSV reader: handles quoted fields, embedded commas/newlines and "" escapes.
+function parseCsv(text) {
+  const rows = []; let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') { inQ = true; }
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') { field += c; }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Map quantity + Shopify tags → one of our section types.
+function classifyOrder(qty, tagsStr) {
+  const t = (tagsStr || '').toLowerCase();
+  const sub = t.includes('subscription');
+  if (sub) {
+    const first = t.includes('first order');   // else treat as recurring
+    if (qty >= 2) return first ? 'SUB_D_FIRST' : 'SUB_D_RECUR';
+    return first ? 'SUB_S_FIRST' : 'SUB_S_RECUR';
+  }
+  if (qty >= 4) return 'FOUR';
+  if (qty === 3) return 'THREE';
+  if (qty <= 1) return 'SINGLE';
+  return 'DOUBLE';
+}
+
+// Group rows by order number (Shopify repeats/blanks order fields across line
+// items) → ordered list of { orderNo, shipName, qty, tags, type, sub, first }.
+function parseOrdersCsv(text) {
+  const rows = parseCsv(text).filter(r => r.length > 1);
+  if (!rows.length) return [];
+  const header = rows[0].map(h => h.trim());
+  const col = (name) => header.indexOf(name);
+  const iName = col('Name'), iShip = col('Shipping Name'), iBill = col('Billing Name'),
+        iQty = col('Lineitem quantity'), iTags = col('Tags');
+  if (iName < 0) throw new Error('Missing "Name" column — is this a Shopify orders export?');
+
+  const map = new Map(), order = [];
+  for (let r = 1; r < rows.length; r++) {
+    const c = rows[r];
+    const no = (c[iName] || '').trim();
+    if (!no) continue;
+    if (!map.has(no)) { map.set(no, { orderNo: no, shipName: '', qty: 0, tags: '' }); order.push(no); }
+    const o = map.get(no);
+    const ship = (c[iShip] || '').trim() || (c[iBill] || '').trim();
+    if (ship && !o.shipName) o.shipName = ship;
+    const q = parseInt((c[iQty] || '').trim(), 10);
+    if (!isNaN(q)) o.qty += q;
+    const tg = (c[iTags] || '').trim();
+    if (tg && !o.tags) o.tags = tg;
+  }
+
+  return order.map(no => {
+    const o = map.get(no);
+    o.type  = classifyOrder(o.qty || 1, o.tags);
+    o.sub   = o.tags.toLowerCase().includes('subscription');
+    o.first = o.tags.toLowerCase().includes('first order');
+    return o;
+  });
+}
+
+// Fuzzy name similarity (0..1) between OCR'd label name and CSV shipping name.
+function nameScore(a, b) {
+  if (!a || !b) return 0;
+  const toks = (s) => s.toLowerCase().normalize('NFKD')
+    .replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  const A = toks(a), B = toks(b);
+  if (!A.length || !B.length) return 0;
+  const setB = new Set(B), seen = new Set();
+  let inter = 0;
+  for (const w of A) if (setB.has(w) && !seen.has(w)) { inter++; seen.add(w); }
+  let score = inter / new Set([...A, ...B]).size;
+  if (A[A.length - 1] === B[B.length - 1]) score += 0.25;  // surname bonus
+  return Math.min(score, 1);
+}
+
+// Assign a type to every page from the CSV: row-order first, name as fallback.
+function applyCsvTypes() {
+  if (!S.orders || !S.orders.length || !S.pages.length) return;
+  const orders = S.orders;
+  const used = new Array(orders.length).fill(false);
+  let matched = 0;
+
+  for (let i = 0; i < S.pages.length; i++) {
+    const pageName = extractAddress(S.pages[i].addressLines).name || '';
+    let chosen = -1, confident = true;
+
+    const posOk = i < orders.length && !used[i] && nameScore(pageName, orders[i].shipName) >= 0.34;
+    if (posOk) {
+      chosen = i;
+    } else {
+      // Name fallback: best-scoring still-unused order.
+      let best = -1, bestScore = 0;
+      for (let j = 0; j < orders.length; j++) {
+        if (used[j]) continue;
+        const s = nameScore(pageName, orders[j].shipName);
+        if (s > bestScore) { bestScore = s; best = j; }
+      }
+      if (best >= 0 && bestScore >= 0.5) { chosen = best; }
+      else if (i < orders.length && !used[i]) { chosen = i; confident = (pageName === ''); }
+    }
+
+    if (chosen >= 0) {
+      used[chosen] = true;
+      const o = orders[chosen];
+      S.pages[i].order = { orderNo: o.orderNo, shipName: o.shipName, qty: o.qty, sub: o.sub, first: o.first, confident };
+      S.pages[i].type  = o.type;
+      matched++;
+    } else {
+      S.pages[i].order = null;
+    }
+    refreshRow(i);
+  }
+
+  const clean = matched === S.pages.length;
+  showStatus(`Auto-tagged ${matched} of ${S.pages.length} labels from CSV${clean ? '' : ' — check the rest manually'}.`, clean ? 'success' : 'info');
+}
 
 // ── PDF preview ───────────────────────────────────────────────────────────────
 async function renderPdfPreview() {
@@ -574,36 +770,42 @@ function checkReady() {
 // ── Type definitions ──────────────────────────────────────────────────────────
 // Plural — used on the cover summary ("Doubles: 3")
 const TYPE_LABEL_PLURAL = {
-  DOUBLE:              'Doubles',
-  SUBSCRIPTION:        'Double Subscriptions',
-  SINGLE:              'Singles',
-  SINGLE_SUBSCRIPTION: 'Single Subscriptions',
-  THREE:               'Triples',
-  FOUR:                'Quadruples',
-  CUSTOM:              'Custom',
+  DOUBLE:      'Doubles',
+  SUB_D_FIRST: 'Double Subs · First Order',
+  SUB_D_RECUR: 'Double Subs · Recurring',
+  SINGLE:      'Singles',
+  SUB_S_FIRST: 'Single Subs · First Order',
+  SUB_S_RECUR: 'Single Subs · Recurring',
+  THREE:       'Triples',
+  FOUR:        'Quadruples',
+  CUSTOM:      'Custom',
 };
 
 // Singular — used on section divider pages and in the UI
 const TYPE_LABEL = {
-  DOUBLE:              'Double',
-  SUBSCRIPTION:        'Double Subscription',
-  SINGLE:              'Single',
-  SINGLE_SUBSCRIPTION: 'Single Subscription',
-  THREE:               'Triple',
-  FOUR:                'Quadruple',
-  CUSTOM:              'Custom',
+  DOUBLE:      'Double',
+  SUB_D_FIRST: 'Double Subscription — First Order',
+  SUB_D_RECUR: 'Double Subscription — Recurring',
+  SINGLE:      'Single',
+  SUB_S_FIRST: 'Single Subscription — First Order',
+  SUB_S_RECUR: 'Single Subscription — Recurring',
+  THREE:       'Triple',
+  FOUR:        'Quadruple',
+  CUSTOM:      'Custom',
 };
 
-const SECTION_ORDER = ['DOUBLE', 'SUBSCRIPTION', 'SINGLE', 'SINGLE_SUBSCRIPTION', 'THREE', 'FOUR', 'CUSTOM'];
+const SECTION_ORDER = ['DOUBLE', 'SUB_D_FIRST', 'SUB_D_RECUR', 'SINGLE', 'SUB_S_FIRST', 'SUB_S_RECUR', 'THREE', 'FOUR', 'CUSTOM'];
 
 const PAGE_TYPE_OPTS = [
-  { value: 'DOUBLE',              label: 'Double',              custom: false },
-  { value: 'SUBSCRIPTION',        label: 'Double Subscription', custom: false },
-  { value: 'SINGLE',              label: 'Single',              custom: false },
-  { value: 'SINGLE_SUBSCRIPTION', label: 'Single Subscription', custom: false },
-  { value: 'THREE',               label: 'Triple',              custom: false },
-  { value: 'FOUR',                label: 'Quadruple',           custom: false },
-  { value: 'CUSTOM',              label: 'Custom',              custom: true  },
+  { value: 'DOUBLE',      label: 'Double',                          custom: false },
+  { value: 'SUB_D_FIRST', label: 'Double Subscription — First',     custom: false },
+  { value: 'SUB_D_RECUR', label: 'Double Subscription — Recurring', custom: false },
+  { value: 'SINGLE',      label: 'Single',                          custom: false },
+  { value: 'SUB_S_FIRST', label: 'Single Subscription — First',     custom: false },
+  { value: 'SUB_S_RECUR', label: 'Single Subscription — Recurring', custom: false },
+  { value: 'THREE',       label: 'Triple',                          custom: false },
+  { value: 'FOUR',        label: 'Quadruple',                       custom: false },
+  { value: 'CUSTOM',      label: 'Custom',                          custom: true  },
 ];
 
 // ── Text extraction ───────────────────────────────────────────────────────────
@@ -773,7 +975,7 @@ async function buildPagesList() {
   countEl.textContent = `${count} page${count !== 1 ? 's' : ''}`;
 
   for (let i = 0; i < count; i++) {
-    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '' });
+    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '', order: null });
   }
 
   const THUMB_W = 72;
@@ -818,6 +1020,8 @@ async function buildPagesList() {
   await ocrWorker.terminate();
   loadingEl.classList.add('hidden');
   bulkEl.classList.remove('hidden');
+
+  if (S.orders) applyCsvTypes();
 }
 
 function getChipLabel(page) {
@@ -847,30 +1051,12 @@ function addPageRow(i) {
 
   const info = document.createElement('div');
   info.className = 'page-info';
-  const extracted = extractAddress(page.addressLines);
-
   const nameEl = document.createElement('div');
   nameEl.className = 'name';
-  if (extracted.name) {
-    nameEl.textContent = extracted.name;
-  } else {
-    nameEl.textContent = 'Unreadable label';
-    nameEl.style.color = 'var(--faint)';
-    nameEl.style.fontStyle = 'italic';
-    nameEl.style.fontWeight = '500';
-  }
-  info.appendChild(nameEl);
-
   const addrEl = document.createElement('div');
-  if (extracted.address) {
-    addrEl.className = 'addr';
-    addrEl.textContent = extracted.address;
-  } else {
-    addrEl.className = 'addr empty';
-    addrEl.textContent = extracted.name ? 'No street address detected' : '—';
-  }
+  addrEl.className = 'addr';
+  info.appendChild(nameEl);
   info.appendChild(addrEl);
-
   row.appendChild(info);
 
   // Type chip + dropdown menu
@@ -898,10 +1084,12 @@ function addPageRow(i) {
     if (page.type === opt.value) item.classList.add('active');
     item.addEventListener('click', () => {
       S.pages[i].type = opt.value;
+      S.pages[i].order = null;   // manual override clears the CSV auto-tag
       chip.dataset.type = opt.value;
       chip.querySelector('.chip-label').textContent = getChipLabel(S.pages[i]);
       menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === opt.value));
       updateCustomInput(i);
+      updateRowIdentity(i);
       if (opt.value !== 'CUSTOM') closeAllMenus();
     });
     menu.appendChild(item);
@@ -947,6 +1135,60 @@ function addPageRow(i) {
   row.appendChild(wrap);
 
   listEl.appendChild(row);
+  updateRowIdentity(i);
+}
+
+// Fill a row's name/address line from the matched CSV order (preferred) or OCR.
+function updateRowIdentity(i) {
+  const page = S.pages[i];
+  const row  = document.getElementById(`row_${i}`);
+  if (!row) return;
+  const nameEl = row.querySelector('.page-info .name');
+  const addrEl = row.querySelector('.page-info .addr');
+  const ocr = extractAddress(page.addressLines);
+
+  const name = (page.order && page.order.shipName) || ocr.name;
+  nameEl.removeAttribute('style');
+  if (name) {
+    nameEl.textContent = name;
+  } else {
+    nameEl.textContent = 'Unreadable label';
+    nameEl.style.color = 'var(--faint)';
+    nameEl.style.fontStyle = 'italic';
+    nameEl.style.fontWeight = '500';
+  }
+
+  if (page.order) {
+    addrEl.className = 'addr';
+    const tag = page.order.confident
+      ? '<span class="csv-tag ok">CSV</span>'
+      : '<span class="csv-tag check">CHECK</span>';
+    addrEl.innerHTML = `${page.order.orderNo} · ${page.order.qty} item${page.order.qty === 1 ? '' : 's'}${tag}`;
+  } else if (ocr.address) {
+    addrEl.className = 'addr';
+    addrEl.textContent = ocr.address;
+  } else {
+    addrEl.className = 'addr empty';
+    addrEl.textContent = name ? 'No street address detected' : '—';
+  }
+}
+
+// Sync a row's chip + identity to the current page state.
+function refreshRow(i) {
+  const page = S.pages[i];
+  const row  = document.getElementById(`row_${i}`);
+  if (!row) return;
+  const chip = row.querySelector('.type-chip');
+  if (chip) {
+    chip.dataset.type = page.type;
+    chip.querySelector('.chip-label').textContent = getChipLabel(page);
+  }
+  const menu = row.querySelector('.type-menu');
+  if (menu) {
+    menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === page.type));
+  }
+  updateCustomInput(i);
+  updateRowIdentity(i);
 }
 
 function closeAllMenus() {
@@ -962,18 +1204,8 @@ function updateCustomInput(i) {
 function setAllTypes(type) {
   S.pages.forEach((p, i) => {
     p.type = type;
-    const row = document.getElementById(`row_${i}`);
-    if (!row) return;
-    const chip = row.querySelector('.type-chip');
-    if (chip) {
-      chip.dataset.type = type;
-      chip.querySelector('.chip-label').textContent = getChipLabel(p);
-    }
-    const menu = row.querySelector('.type-menu');
-    if (menu) {
-      menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === type));
-    }
-    updateCustomInput(i);
+    p.order = null;   // manual override clears any CSV auto-tag
+    refreshRow(i);
   });
   closeAllMenus();
 }
