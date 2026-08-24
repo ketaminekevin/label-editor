@@ -662,15 +662,31 @@ function parseOrdersCsv(text) {
 }
 
 // Fuzzy name similarity (0..1) between OCR'd label name and CSV shipping name.
+// Robust to OCR quirks: dropped spaces ("REBECCANICHOLSON"), noise prefixes
+// ("wun LIZWILLING"), and partial tokens.
 function nameScore(a, b) {
   if (!a || !b) return 0;
+
+  // Space-stripped, letters-only form catches names OCR ran together.
+  const collapse = (s) => s.toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
+  const ca = collapse(a), cb = collapse(b);
+  if (!ca || !cb) return 0;
+  if (ca.length >= 5 && cb.length >= 5 && (ca.includes(cb) || cb.includes(ca))) return 1;
+
   const toks = (s) => s.toLowerCase().normalize('NFKD')
     .replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
   const A = toks(a), B = toks(b);
   if (!A.length || !B.length) return 0;
-  const setB = new Set(B), seen = new Set();
+
+  // A token counts if it equals a CSV token, is a substring of the collapsed
+  // CSV name, or shares a 4+ char substring with one (handles run-together names).
+  const matchTok = (w) =>
+    cb.includes(w) ||
+    B.some(x => x === w || (Math.min(w.length, x.length) >= 4 && (x.includes(w) || w.includes(x))));
+
+  const seen = new Set();
   let inter = 0;
-  for (const w of A) if (setB.has(w) && !seen.has(w)) { inter++; seen.add(w); }
+  for (const w of A) if (!seen.has(w) && matchTok(w)) { inter++; seen.add(w); }
   let score = inter / new Set([...A, ...B]).size;
   if (A[A.length - 1] === B[B.length - 1]) score += 0.25;  // surname bonus
   return Math.min(score, 1);
