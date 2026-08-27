@@ -961,6 +961,23 @@ async function extractCropText(pdfPage, vpScale, cX, cY, cW, cH) {
 // summary page from a previously-exported print file).
 const LABEL_MARKER = /OVERNIGHT|NZ\s*POST|NZPOST|SATCHEL|COURIER|SIGNATURE|GSS-?DLE|RURAL\s*DELIVERY|CUST\s*REF|\(00\)/i;
 
+// Positively identify one of *our own* exported divider / summary pages so we
+// can drop them when a print file is re-uploaded. We only skip on a positive
+// match — never merely because a page lacks a text layer — so real labels
+// (which often have no selectable text) are always kept.
+function looksLikeDividerOrSummary(text) {
+  const t = (text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  if (LABEL_MARKER.test(t)) return false;          // real labels are never dividers
+  // Summary sheet: lines like "Doubles: 15", "Singles: 2"
+  if (/(doubles|singles|triples|quadruples|subs?)\b[^:]*:\s*\d+/i.test(t)) return true;
+  if (/:\s*\d+\b[\s\S]*:\s*\d+/.test(t)) return true;   // ≥2 "label: number" lines
+  // Divider page: a short section-name line (no address, no barcode).
+  const words = t.split(' ').filter(Boolean);
+  if (words.length <= 8 && /\b(double|single|triple|quadruple|subscription|recurring|first\s*order|custom)\b/i.test(t)) return true;
+  return false;
+}
+
 // Read the Cust Ref straight from the digital text layer (whole crop).
 async function extractCustRef(pdfPage, vpScale, cX, cY, cW, cH) {
   const vp = pdfPage.getViewport({ scale: vpScale });
@@ -1150,9 +1167,10 @@ async function buildPagesList() {
       if (!ref) ref = await ocrCustRefRegion(full, cX, cY, cW, cH, ocrWorker);
     } catch (_) { lines = []; }
 
-    // Skip pages that aren't genuine courier labels — e.g. the divider and
-    // summary pages baked into a previously-exported print file.
-    if (!ref && !LABEL_MARKER.test(cropText)) { skipped++; continue; }
+    // Skip only pages that positively look like our own divider / summary
+    // pages (from a re-uploaded print file). Everything else is kept, so a
+    // real label with no selectable text layer is never dropped.
+    if (!ref && looksLikeDividerOrSummary(cropText)) { skipped++; continue; }
 
     const thumbH = Math.round(THUMB_W * cH / cW);
     const thumb  = document.createElement('canvas');
