@@ -1539,10 +1539,14 @@ async function openZoom(i) {
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
   } catch (_) { /* leave overlay open with whatever rendered */ }
 }
-function closeZoom() { document.getElementById('zoomOverlay').classList.remove('open'); }
-document.getElementById('zoomClose').addEventListener('click', closeZoom);
-document.getElementById('zoomOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'zoomOverlay') closeZoom();
+function closeZoom() {
+  const o = document.getElementById('zoomOverlay');
+  if (o) o.classList.remove('open');
+}
+// Delegated so it works regardless of when the overlay markup is parsed
+// (the overlay lives after this script in the document).
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#zoomClose') || e.target.id === 'zoomOverlay') closeZoom();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(); });
 
