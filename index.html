@@ -783,6 +783,7 @@ function applyCsvTypes() {
   let msg = `Auto-tagged ${matched} of ${S.pages.length} labels from CSV`;
   if (notInCsv) msg += ` — ${notInCsv} label${notInCsv === 1 ? '' : 's'} not in the CSV (flagged in red)`;
   else if (!clean) msg += ' — check the rest manually';
+  if (S.skippedPages) msg += `; skipped ${S.skippedPages} non-label page${S.skippedPages === 1 ? '' : 's'}`;
   showStatus(msg + '.', clean ? 'success' : (notInCsv ? 'error' : 'info'));
 }
 
@@ -939,6 +940,27 @@ function parseCustRef(text) {
   return m ? 'R' + m[1] : null;
 }
 
+// Join all text-layer items inside the crop into one string. Used both to pull
+// the Cust Ref and to decide whether a page is a real courier label.
+async function extractCropText(pdfPage, vpScale, cX, cY, cW, cH) {
+  const vp = pdfPage.getViewport({ scale: vpScale });
+  let tc;
+  try { tc = await pdfPage.getTextContent(); } catch (_) { return ''; }
+  if (!tc || !tc.items || !tc.items.length) return '';
+  const parts = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const [vx, vy] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+    if (vx < cX || vx > cX + cW || vy < cY || vy > cY + cH) continue;
+    parts.push(it.str);
+  }
+  return parts.join(' ');
+}
+
+// Markers that identify a genuine NZ Post courier label (vs. a divider or
+// summary page from a previously-exported print file).
+const LABEL_MARKER = /OVERNIGHT|NZ\s*POST|NZPOST|SATCHEL|COURIER|SIGNATURE|GSS-?DLE|RURAL\s*DELIVERY|CUST\s*REF|\(00\)/i;
+
 // Read the Cust Ref straight from the digital text layer (whole crop).
 async function extractCustRef(pdfPage, vpScale, cX, cY, cW, cH) {
   const vp = pdfPage.getViewport({ scale: vpScale });
@@ -1092,11 +1114,10 @@ async function buildPagesList() {
 
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
   const count  = pdfDoc.numPages;
-  countEl.textContent = `${count} page${count !== 1 ? 's' : ''}`;
+  countEl.textContent = `Reading ${count}…`;
 
-  for (let i = 0; i < count; i++) {
-    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '', order: null, refNo: null, notInCsv: false });
-  }
+  S.pages = [];
+  let skipped = 0;
 
   const THUMB_W = 72;
   const OCR_SCALE = 2.5;
@@ -1115,36 +1136,43 @@ async function buildPagesList() {
     const cX = S.crop.x * f, cY = S.crop.y * f;
     const cW = S.crop.w * f, cH = S.crop.h * f;
 
-    const thumbH = Math.round(THUMB_W * cH / cW);
-    const thumb  = document.createElement('canvas');
-    thumb.width  = THUMB_W; thumb.height = thumbH;
-    thumb.getContext('2d').drawImage(full, cX, cY, cW, cH, 0, 0, THUMB_W, thumbH);
-    S.pages[i - 1].thumb = thumb;
-
+    let lines = [], ref = null, cropText = '';
     try {
       // Prefer the digital text layer. Fall back to OCR only when the layer
       // is missing or sparse (e.g., scanned/rasterised labels).
-      let lines = await extractTextRegion(page, OCR_SCALE, cX, cY, cW, cH);
-      let ref  = await extractCustRef(page, OCR_SCALE, cX, cY, cW, cH);
+      cropText = await extractCropText(page, OCR_SCALE, cX, cY, cW, cH);
+      ref = parseCustRef(cropText);
+      lines = await extractTextRegion(page, OCR_SCALE, cX, cY, cW, cH);
       if (lines.length < 2) {
         loadingEl.textContent = `OCR ${i} of ${count}…`;
         lines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
       }
       if (!ref) ref = await ocrCustRefRegion(full, cX, cY, cW, cH, ocrWorker);
-      S.pages[i - 1].addressLines = lines;
-      S.pages[i - 1].refNo = ref;
-    } catch (_) {
-      S.pages[i - 1].addressLines = [];
-    }
+    } catch (_) { lines = []; }
 
-    addPageRow(i - 1);
+    // Skip pages that aren't genuine courier labels — e.g. the divider and
+    // summary pages baked into a previously-exported print file.
+    if (!ref && !LABEL_MARKER.test(cropText)) { skipped++; continue; }
+
+    const thumbH = Math.round(THUMB_W * cH / cW);
+    const thumb  = document.createElement('canvas');
+    thumb.width  = THUMB_W; thumb.height = thumbH;
+    thumb.getContext('2d').drawImage(full, cX, cY, cW, cH, 0, 0, THUMB_W, thumbH);
+
+    // srcIdx maps back to the original PDF page for zoom + export, since the
+    // list index no longer matches once non-label pages are skipped.
+    S.pages.push({ type: 'DOUBLE', thumb, addressLines: lines, customText: '', order: null, refNo: ref, notInCsv: false, srcIdx: i - 1 });
+    addPageRow(S.pages.length - 1);
   }
 
   await ocrWorker.terminate();
   loadingEl.classList.add('hidden');
   bulkEl.classList.remove('hidden');
+  countEl.textContent = `${S.pages.length} label${S.pages.length !== 1 ? 's' : ''}`;
+  S.skippedPages = skipped;
 
   if (S.orders) applyCsvTypes();
+  else if (skipped) showStatus(`Skipped ${skipped} non-label page${skipped === 1 ? '' : 's'} (divider / summary pages from a print file).`, 'info');
 }
 
 function getChipLabel(page) {
@@ -1441,7 +1469,7 @@ async function exportPrintFile() {
       for (const idx of indices) {
         totalProcessed++;
         showStatus(`Processing label ${totalProcessed} of ${S.pages.length}…`, 'info');
-        const [embedded] = await newPdf.embedPages([origPages[idx]]);
+        const [embedded] = await newPdf.embedPages([origPages[S.pages[idx].srcIdx ?? idx]]);
         const newPage    = newPdf.addPage([cropW, cropH]);
         newPage.drawPage(embedded, { x: -cropLeft, y: -cropBottom, width: S.pdfPageW, height: S.pdfPageH });
         newPage.drawImage(logoEmbed, { x: logoX, y: logoY, width: logoW, height: logoH });
@@ -1528,7 +1556,7 @@ async function openZoom(i) {
   overlay.classList.add('open');
   try {
     if (!_zoomDoc) _zoomDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
-    const page = await _zoomDoc.getPage(i + 1);
+    const page = await _zoomDoc.getPage((S.pages[i].srcIdx ?? i) + 1);
     // Scale to roughly fill the viewport height while capped for sanity.
     const base = page.getViewport({ scale: 1 });
     const target = Math.min(window.innerHeight * 0.9, 900);
