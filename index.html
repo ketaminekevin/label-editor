@@ -788,10 +788,25 @@ function applyCsvTypes() {
 }
 
 // ── PDF preview ───────────────────────────────────────────────────────────────
+// Find the first page that looks like a real courier label, so the crop/logo
+// preview doesn't land on a divider/summary page from a re-uploaded print file.
+async function firstLabelPageNum(pdfDoc) {
+  const count = pdfDoc.numPages;
+  for (let i = 1; i <= Math.min(count, 40); i++) {
+    try {
+      const p  = await pdfDoc.getPage(i);
+      const vp = p.getViewport({ scale: 1 });
+      const txt = await extractCropText(p, 1, 0, 0, vp.width, vp.height);
+      if (parseCustRef(txt) || LABEL_MARKER.test(txt)) return i;
+    } catch (_) { /* keep scanning */ }
+  }
+  return 1;
+}
+
 async function renderPdfPreview() {
   _zoomDoc = null;   // invalidate zoom cache for the new document
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
-  const page   = await pdfDoc.getPage(1);
+  const page   = await pdfDoc.getPage(await firstLabelPageNum(pdfDoc));
   const rawVp  = page.getViewport({ scale: 1 });
 
   S.pdfPageW = rawVp.width;
