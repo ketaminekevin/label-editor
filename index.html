@@ -71,7 +71,10 @@
       display: block;
       border: 1px solid var(--border);
       border-radius: 4px;
+      cursor: zoom-in;
+      transition: border-color .12s, box-shadow .12s;
     }
+    .page-thumb:hover { border-color: var(--text); box-shadow: 0 0 0 2px rgba(0,0,0,.06); }
 
     .page-info { flex: 1; min-width: 0; }
     .page-info .name {
@@ -94,6 +97,31 @@
     }
     .csv-tag.ok    { background: var(--ok-bg); color: var(--ok); }
     .csv-tag.check { background: #fff7ed; color: #c2410c; }
+    .csv-tag.miss  { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+    /* Highlight rows whose order number isn't in the uploaded CSV */
+    .page-row.not-in-csv { background: #fef2f2; box-shadow: inset 3px 0 0 #ef4444; }
+
+    /* Label zoom lightbox */
+    .zoom-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(15, 23, 42, .82);
+      display: none; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .zoom-overlay.open { display: flex; }
+    .zoom-overlay img, .zoom-overlay canvas {
+      max-width: 96vw; max-height: 92vh;
+      background: #fff; border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .zoom-close {
+      position: fixed; top: 18px; right: 22px;
+      width: 40px; height: 40px; border-radius: 50%;
+      border: none; background: rgba(255,255,255,.15); color: #fff;
+      font-size: 22px; line-height: 1; cursor: pointer;
+    }
+    .zoom-close:hover { background: rgba(255,255,255,.28); }
 
     .type-wrap { position: relative; flex-shrink: 0; }
 
@@ -697,7 +725,7 @@ function applyCsvTypes() {
   if (!S.orders || !S.orders.length || !S.pages.length) return;
   const orders = S.orders;
   const used = new Array(orders.length).fill(false);
-  let matched = 0;
+  let matched = 0, notInCsv = 0;
 
   // Exact match key: the "Cust Ref: #R####" printed on every label maps 1:1 to
   // the CSV order number. Build a lookup so we never rely on name OCR when the
@@ -711,15 +739,24 @@ function applyCsvTypes() {
   for (let i = 0; i < S.pages.length; i++) {
     const pageName = extractAddress(S.pages[i].addressLines).name || '';
     let chosen = -1, confident = true;
+    S.pages[i].notInCsv = false;
 
     const refKey = normRef(S.pages[i].refNo);
-    const refIdx = refKey != null ? refMap.get(refKey) : undefined;
-    if (refIdx !== undefined && !used[refIdx]) {
-      chosen = refIdx;                       // exact order-number match
+    if (refKey != null) {
+      // The label carries a legible order number — trust it exclusively.
+      // If it's not in the CSV, flag it rather than fuzzy-matching to some
+      // other customer's order (which produced the wrong-name bug).
+      const refIdx = refMap.get(refKey);
+      if (refIdx !== undefined && !used[refIdx]) {
+        chosen = refIdx;                     // exact order-number match
+      } else {
+        S.pages[i].notInCsv = true;          // ref legible but absent/duplicate
+        notInCsv++;
+      }
     } else if (i < orders.length && !used[i] && nameScore(pageName, orders[i].shipName) >= 0.34) {
-      chosen = i;
+      chosen = i;                            // no ref → positional guess
     } else {
-      // Name fallback: best-scoring still-unused order.
+      // No legible ref → best-scoring still-unused order by name.
       let best = -1, bestScore = 0;
       for (let j = 0; j < orders.length; j++) {
         if (used[j]) continue;
@@ -743,11 +780,15 @@ function applyCsvTypes() {
   }
 
   const clean = matched === S.pages.length;
-  showStatus(`Auto-tagged ${matched} of ${S.pages.length} labels from CSV${clean ? '' : ' — check the rest manually'}.`, clean ? 'success' : 'info');
+  let msg = `Auto-tagged ${matched} of ${S.pages.length} labels from CSV`;
+  if (notInCsv) msg += ` — ${notInCsv} label${notInCsv === 1 ? '' : 's'} not in the CSV (flagged in red)`;
+  else if (!clean) msg += ' — check the rest manually';
+  showStatus(msg + '.', clean ? 'success' : (notInCsv ? 'error' : 'info'));
 }
 
 // ── PDF preview ───────────────────────────────────────────────────────────────
 async function renderPdfPreview() {
+  _zoomDoc = null;   // invalidate zoom cache for the new document
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
   const page   = await pdfDoc.getPage(1);
   const rawVp  = page.getViewport({ scale: 1 });
@@ -1054,7 +1095,7 @@ async function buildPagesList() {
   countEl.textContent = `${count} page${count !== 1 ? 's' : ''}`;
 
   for (let i = 0; i < count; i++) {
-    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '', order: null, refNo: null });
+    S.pages.push({ type: 'DOUBLE', thumb: null, addressLines: [], customText: '', order: null, refNo: null, notInCsv: false });
   }
 
   const THUMB_W = 72;
@@ -1129,6 +1170,8 @@ function addPageRow(i) {
   tc.height = page.thumb.height;
   tc.getContext('2d').drawImage(page.thumb, 0, 0);
   tc.className = 'page-thumb';
+  tc.title = 'Click to zoom';
+  tc.addEventListener('click', () => openZoom(i));
   row.appendChild(tc);
 
   const info = document.createElement('div');
@@ -1229,6 +1272,8 @@ function updateRowIdentity(i) {
   const addrEl = row.querySelector('.page-info .addr');
   const ocr = extractAddress(page.addressLines);
 
+  row.classList.toggle('not-in-csv', !!page.notInCsv);
+
   const name = (page.order && page.order.shipName) || ocr.name;
   nameEl.removeAttribute('style');
   if (name) {
@@ -1246,6 +1291,12 @@ function updateRowIdentity(i) {
       ? '<span class="csv-tag ok">CSV</span>'
       : '<span class="csv-tag check">CHECK</span>';
     addrEl.innerHTML = `${page.order.orderNo} · ${page.order.qty} item${page.order.qty === 1 ? '' : 's'}${tag}`;
+  } else if (page.notInCsv) {
+    // Label has a real order number that the CSV doesn't cover — say so loudly
+    // and set the type manually.
+    addrEl.className = 'addr';
+    const ref = page.refNo ? '#' + page.refNo.replace(/^#/, '') : 'order';
+    addrEl.innerHTML = `${ref}<span class="csv-tag miss">NOT IN CSV</span>`;
   } else if (ocr.address) {
     addrEl.className = 'addr';
     addrEl.textContent = ocr.address;
@@ -1469,6 +1520,32 @@ async function exportPrintFile() {
 }
 
 // ── Status helper ─────────────────────────────────────────────────────────────
+// ── Label zoom lightbox ───────────────────────────────────────────────────────
+let _zoomDoc = null;
+async function openZoom(i) {
+  const overlay = document.getElementById('zoomOverlay');
+  const canvas  = document.getElementById('zoomCanvas');
+  overlay.classList.add('open');
+  try {
+    if (!_zoomDoc) _zoomDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
+    const page = await _zoomDoc.getPage(i + 1);
+    // Scale to roughly fill the viewport height while capped for sanity.
+    const base = page.getViewport({ scale: 1 });
+    const target = Math.min(window.innerHeight * 0.9, 900);
+    const scale = Math.min(3, target / base.height);
+    const vp = page.getViewport({ scale });
+    canvas.width = Math.round(vp.width);
+    canvas.height = Math.round(vp.height);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  } catch (_) { /* leave overlay open with whatever rendered */ }
+}
+function closeZoom() { document.getElementById('zoomOverlay').classList.remove('open'); }
+document.getElementById('zoomClose').addEventListener('click', closeZoom);
+document.getElementById('zoomOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'zoomOverlay') closeZoom();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(); });
+
 function showStatus(msg, type) {
   const el = document.getElementById('statusMsg');
   el.textContent = msg;
@@ -1479,5 +1556,10 @@ function showStatus(msg, type) {
   el.classList.remove('hidden');
 }
 </script>
+
+<div id="zoomOverlay" class="zoom-overlay">
+  <button id="zoomClose" class="zoom-close" aria-label="Close">&times;</button>
+  <canvas id="zoomCanvas"></canvas>
+</div>
 </body>
 </html>
