@@ -1196,7 +1196,9 @@ function extractAddress(rawLines) {
 }
 
 // ── Pages list ────────────────────────────────────────────────────────────────
+let _buildGen = 0;   // bumps every run so an older, slower run can bow out
 async function buildPagesList() {
+  const gen = ++_buildGen;
   S.pages = [];
   const loadingEl = document.getElementById('pagesLoading');
   const listEl    = document.getElementById('pagesList');
@@ -1211,16 +1213,17 @@ async function buildPagesList() {
   const ocrWorker = await Tesseract.createWorker('eng');
 
   const pdfDoc = await pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
+  if (gen !== _buildGen) { await ocrWorker.terminate(); return; }
   const count  = pdfDoc.numPages;
   countEl.textContent = `Reading ${count}…`;
 
-  S.pages = [];
   let skipped = 0;
 
   const THUMB_W = 72;
   const OCR_SCALE = 2.5;
 
   for (let i = 1; i <= count; i++) {
+    if (gen !== _buildGen) { await ocrWorker.terminate(); return; }  // superseded
     loadingEl.textContent = `Reading ${i} of ${count}…`;
 
     const page = await pdfDoc.getPage(i);
@@ -1248,6 +1251,8 @@ async function buildPagesList() {
       if (!ref) ref = await ocrCustRefRegion(full, cX, cY, cW, cH, ocrWorker);
     } catch (_) { lines = []; }
 
+    if (gen !== _buildGen) { await ocrWorker.terminate(); return; }  // superseded mid-page
+
     // Skip only pages that positively look like our own divider / summary
     // pages (from a re-uploaded print file). Everything else is kept, so a
     // real label with no selectable text layer is never dropped.
@@ -1265,6 +1270,7 @@ async function buildPagesList() {
   }
 
   await ocrWorker.terminate();
+  if (gen !== _buildGen) return;   // a newer run took over while we finished
   loadingEl.classList.add('hidden');
   bulkEl.classList.remove('hidden');
   countEl.textContent = `${S.pages.length} label${S.pages.length !== 1 ? 's' : ''}`;
