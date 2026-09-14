@@ -123,6 +123,20 @@
     }
     .zoom-close:hover { background: rgba(255,255,255,.28); }
 
+    /* Toggle switch */
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: var(--border-strong); border-radius: 22px; transition: background .15s;
+    }
+    .switch .slider::before {
+      content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: transform .15s;
+    }
+    .switch input:checked + .slider { background: var(--ok); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+
     .type-wrap { position: relative; flex-shrink: 0; }
 
     .type-chip {
@@ -274,6 +288,15 @@
       </div>
     </div>
 
+    <!-- International mode -->
+    <label id="intlToggle" class="flex items-center gap-3 px-4 py-3 surface cursor-pointer" style="border:1px solid var(--border);">
+      <span class="switch"><input type="checkbox" id="intlCheckbox" /><span class="slider"></span></span>
+      <span>
+        <span class="text-sm font-medium">International labels (CN22)</span>
+        <span class="block text-xs" style="color:var(--muted);">Read the customs-declaration layout — recipient in the left “TO” box, order in “Ref: #R…”.</span>
+      </span>
+    </label>
+
     <!-- Editor -->
     <div id="editorSection" class="hidden surface overflow-hidden">
       <div class="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border);">
@@ -346,7 +369,18 @@ const S = {
 
   pages: [],
   orders: null,   // parsed orders_export.csv rows (or null)
+  international: false,   // CN22 customs-label layout
 };
+
+// Recipient-block location as fractions of the crop, per label layout.
+// Domestic NZ Post: right column, top half. International CN22: left "TO" box.
+const RECIPIENT_REGION = {
+  domestic: { minX: 0.50, maxX: 1.00, minY: 0.07, maxY: 0.55 },
+  intl:     { minX: 0.11, maxX: 0.48, minY: 0.345, maxY: 0.62 },
+};
+function recipientRegion() {
+  return S.international ? RECIPIENT_REGION.intl : RECIPIENT_REGION.domestic;
+}
 
 const canvas = document.getElementById('editor');
 const ctx    = canvas.getContext('2d');
@@ -736,23 +770,32 @@ function applyCsvTypes() {
     if (key && !refMap.has(key)) refMap.set(key, idx);
   });
 
+  // Pass 1 — reserve exact ref matches so a fuzzy/name guess can never steal an
+  // order that another label matches exactly.
+  const chosenOf = new Array(S.pages.length).fill(-1);
+  const refKeys  = S.pages.map(p => normRef(p.refNo));
+  for (let i = 0; i < S.pages.length; i++) {
+    S.pages[i].notInCsv = false;
+    const rk = refKeys[i];
+    if (rk == null) continue;
+    const idx = refMap.get(rk);
+    if (idx !== undefined && !used[idx]) { chosenOf[i] = idx; used[idx] = true; }
+  }
+
+  // Pass 2 — everything still unmatched: fuzzy ref, then name/positional.
   for (let i = 0; i < S.pages.length; i++) {
     const pageName = extractAddress(S.pages[i].addressLines).name || '';
-    let chosen = -1, confident = true;
-    S.pages[i].notInCsv = false;
-
-    const refKey = normRef(S.pages[i].refNo);
+    let chosen = chosenOf[i], confident = true;
+    if (chosen >= 0) { /* exact match reserved in pass 1 */ }
+    else {
+    const refKey = refKeys[i];
     if (refKey != null) {
-      // The label carries a legible order number — trust it exclusively.
-      // If it's not in the CSV, flag it rather than fuzzy-matching to some
-      // other customer's order (which produced the wrong-name bug).
-      const refIdx = refMap.get(refKey);
-      if (refIdx !== undefined && !used[refIdx]) {
-        chosen = refIdx;                     // exact order-number match
-      } else {
-        S.pages[i].notInCsv = true;          // ref legible but absent/duplicate
-        notInCsv++;
-      }
+      // A legible order number that isn't an exact CSV hit. OCR sometimes
+      // confuses look-alike digits (0/9, 8/6, 1/7…) — if exactly one unused
+      // order matches after allowing those swaps, take it but flag it CHECK.
+      const fz = fuzzyRefIndex(refKey, refMap, used);
+      if (fz >= 0) { chosen = fz; confident = false; }
+      else { S.pages[i].notInCsv = true; notInCsv++; }
     } else if (i < orders.length && !used[i] && nameScore(pageName, orders[i].shipName) >= 0.34) {
       chosen = i;                            // no ref → positional guess
     } else {
@@ -765,6 +808,7 @@ function applyCsvTypes() {
       }
       if (best >= 0 && bestScore >= 0.5) { chosen = best; }
       else if (i < orders.length && !used[i]) { chosen = i; confident = (pageName === ''); }
+    }
     }
 
     if (chosen >= 0) {
@@ -889,10 +933,11 @@ async function extractTextRegion(pdfPage, vpScale, cX, cY, cW, cH) {
   try { tc = await pdfPage.getTextContent(); } catch (_) { return []; }
   if (!tc || !tc.items || !tc.items.length) return [];
 
-  const minX = cX + cW * 0.50;
-  const maxX = cX + cW;
-  const minY = cY + cH * 0.07;
-  const maxY = cY + cH * 0.55;
+  const r = recipientRegion();
+  const minX = cX + cW * r.minX;
+  const maxX = cX + cW * r.maxX;
+  const minY = cY + cH * r.minY;
+  const maxY = cY + cH * r.maxY;
 
   const items = [];
   for (const it of tc.items) {
@@ -929,6 +974,32 @@ function normRef(s) {
   return m ? m[0] : null;
 }
 
+// Common OCR digit confusions. Used to recover a ref when the exact reading
+// isn't in the CSV — accepted only when a single unused order matches.
+const DIGIT_CONFUSIONS = {
+  '0': ['0', '9', '8'], '9': ['9', '0'],
+  '8': ['8', '6', '0'], '6': ['6', '8', '5'],
+  '5': ['5', '6'],      '1': ['1', '7'], '7': ['7', '1'],
+};
+function fuzzyRefIndex(refKey, refMap, used) {
+  const m = (refKey || '').match(/^R(\d+)$/);
+  if (!m) return -1;
+  let variants = [''];
+  for (const d of m[1]) {
+    const opts = DIGIT_CONFUSIONS[d] || [d];
+    const next = [];
+    for (const v of variants) for (const o of opts) next.push(v + o);
+    variants = next;
+    if (variants.length > 256) return -1;   // too ambiguous — bail
+  }
+  const hits = new Set();
+  for (const v of variants) {
+    const idx = refMap.get('R' + v);
+    if (idx !== undefined && !used[idx]) hits.add(idx);
+  }
+  return hits.size === 1 ? [...hits][0] : -1;
+}
+
 // Pull the order number out of a blob of label text. NZ Post prints
 // "Cust Ref: #R3298" in the left column — a far more reliable match key than
 // the OCR'd recipient name.
@@ -959,7 +1030,7 @@ async function extractCropText(pdfPage, vpScale, cX, cY, cW, cH) {
 
 // Markers that identify a genuine NZ Post courier label (vs. a divider or
 // summary page from a previously-exported print file).
-const LABEL_MARKER = /OVERNIGHT|NZ\s*POST|NZPOST|SATCHEL|COURIER|SIGNATURE|GSS-?DLE|RURAL\s*DELIVERY|CUST\s*REF|\(00\)/i;
+const LABEL_MARKER = /OVERNIGHT|NZ\s*POST|NZPOST|SATCHEL|COURIER|SIGNATURE|GSS-?DLE|RURAL\s*DELIVERY|CUST\s*REF|\(00\)|CN22|CUSTOMS\s*DECLARATION|DELIVERY\s*CONFIRMATION|PERMIT\s*NO|A\/C\s*:|\bRef:\s*#?R/i;
 
 // Positively identify one of *our own* exported divider / summary pages so we
 // can drop them when a print file is re-uploaded. We only skip on a positive
@@ -994,33 +1065,43 @@ async function extractCustRef(pdfPage, vpScale, cX, cY, cW, cH) {
   return parseCustRef(parts.join(' '));
 }
 
-// OCR fallback: read the Cust Ref band (left-centre, just below the service
-// code block) for raster-only labels with no text layer.
+// OCR fallback: read the Cust Ref band for raster-only labels with no text
+// layer. Domestic = left-centre below the service code; CN22 = "Ref: #R…" at the
+// bottom-left. Restricting Tesseract to digits + R#: cuts down 0/9 style misreads.
 async function ocrCustRefRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
-  const srcX = cX + cW * 0.26;
-  const srcY = cY + cH * 0.08;
-  const srcW = cW * 0.28;
-  const srcH = cH * 0.24;
+  const band = S.international
+    ? { x: 0.00, y: 0.62, w: 0.40, h: 0.16 }   // "A/C … Ref: #R…" row
+    : { x: 0.26, y: 0.08, w: 0.28, h: 0.24 };
+  const srcX = cX + cW * band.x;
+  const srcY = cY + cH * band.y;
+  const srcW = cW * band.w;
+  const srcH = cH * band.h;
 
   const scale = 3;
   const c = document.createElement('canvas');
   c.width  = Math.round(srcW * scale);
   c.height = Math.round(srcH * scale);
   c.getContext('2d').drawImage(fullCanvas, srcX, srcY, srcW, srcH, 0, 0, c.width, c.height);
-  const { data: { text } } = await ocrWorker.recognize(c);
+
+  let text = '';
+  try {
+    await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789R#rRefEF: ', tessedit_pageseg_mode: '6' });
+    text = (await ocrWorker.recognize(c)).data.text;
+  } finally {
+    // Restore defaults so the address OCR still reads letters normally.
+    await ocrWorker.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '3' });
+  }
   return parseCustRef(text);
 }
 
-// OCR fallback for raster-only labels.
+// OCR fallback for raster-only labels. Domestic recipient sits top-right; the
+// CN22 recipient sits in the left "TO" box.
 async function ocrAddressRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
-  // NZ Post labels put the recipient block in the top-right quadrant. Anything
-  // wider than 50% horizontal catches the right edge of the datamatrix barcode
-  // (which OCRs as random 1-3 character garbage). Anything below 55% vertical
-  // catches the static sender block in the lower-right.
-  const srcX = cX + cW * 0.50;
-  const srcY = cY + cH * 0.07;
-  const srcW = cW * 0.50;
-  const srcH = cH * 0.48;
+  const r = recipientRegion();
+  const srcX = cX + cW * r.minX;
+  const srcY = cY + cH * r.minY;
+  const srcW = cW * (r.maxX - r.minX);
+  const srcH = cH * (r.maxY - r.minY);
 
   const scale = 2;
   const ocrCanvas = document.createElement('canvas');
@@ -1595,6 +1676,13 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#zoomClose') || e.target.id === 'zoomOverlay') closeZoom();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(); });
+
+// ── International mode toggle ──────────────────────────────────────────────────
+document.getElementById('intlCheckbox').addEventListener('change', (e) => {
+  S.international = e.target.checked;
+  // Re-read the already-loaded labels with the new layout profile.
+  if (S.pdfBitmap) buildPagesList();
+});
 
 function showStatus(msg, type) {
   const el = document.getElementById('statusMsg');
