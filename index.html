@@ -97,6 +97,12 @@
     }
     .csv-tag.ok    { background: var(--ok-bg); color: var(--ok); }
     .csv-tag.check { background: #fff7ed; color: #c2410c; }
+    .ref-edit { cursor: text; border-bottom: 1px dashed var(--faint); }
+    .ref-edit:hover { color: var(--text); border-bottom-color: var(--text); }
+    .ref-input {
+      font: inherit; font-size: 12px; width: 92px;
+      padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 4px;
+    }
     .csv-tag.miss  { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
 
     /* Highlight rows whose order number isn't in the uploaded CSV */
@@ -300,8 +306,16 @@
     <!-- Editor -->
     <div id="editorSection" class="hidden surface overflow-hidden">
       <div class="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border);">
-        <p class="text-sm font-medium">Crop &amp; logo position</p>
-        <span class="text-xs" style="color:var(--faint);">Drag corners to crop · drag logo to move</span>
+        <div>
+          <p class="text-sm font-medium">Crop &amp; logo position</p>
+          <p id="layoutNote" class="text-xs" style="color:var(--faint);">Drag corners to crop · drag logo to move</p>
+        </div>
+        <div class="flex items-center flex-wrap gap-1.5">
+          <button type="button" class="bulk-btn" onclick="saveLayout()">Save as default</button>
+          <button type="button" class="bulk-btn" onclick="exportLayout()">Export layout</button>
+          <button type="button" class="bulk-btn" onclick="document.getElementById('layoutInput').click()">Import</button>
+          <input type="file" id="layoutInput" accept=".json,application/json" class="hidden" />
+        </div>
       </div>
       <div class="p-4 flex justify-center" style="background:#fafaf8;">
         <canvas id="editor" style="border:1px solid var(--border); border-radius:6px;"></canvas>
@@ -627,7 +641,7 @@ setupDropZone('logoZone', 'logoInput', async (file) => {
   n.textContent = file.name; n.classList.remove('hidden');
   document.getElementById('logoZone').classList.add('has-file');
 
-  if (S.pdfBitmap) { initLogo(); render(); }
+  if (S.pdfBitmap) { applySavedLayout({ crop: false }); render(); }
   checkReady();
 });
 
@@ -754,74 +768,109 @@ function nameScore(a, b) {
   return Math.min(score, 1);
 }
 
-// Assign a type to every page from the CSV: row-order first, name as fallback.
+// Assign an order (and type) to every page from the CSV.
+//
+// Each page proposes candidate orders, then they're assigned greedily — best
+// score first, one order per page and one page per order:
+//   - a manually typed order number outranks everything;
+//   - a text-layer number is exact;
+//   - an OCR'd number also proposes its look-alike-digit variants (0/9, 1/7,
+//     8/6 …) that exist in the CSV. Order numbers are sequential, so a misread
+//     usually lands on ANOTHER real order — the recipient name decides;
+//   - pages with no readable number propose orders whose ship-to name matches,
+//     then fall back to CSV row position.
 function applyCsvTypes() {
   if (!S.orders || !S.orders.length || !S.pages.length) return;
   const orders = S.orders;
-  const used = new Array(orders.length).fill(false);
-  let matched = 0, notInCsv = 0;
-
-  // Exact match key: the "Cust Ref: #R####" printed on every label maps 1:1 to
-  // the CSV order number. Build a lookup so we never rely on name OCR when the
-  // ref is legible.
   const refMap = new Map();
   orders.forEach((o, idx) => {
     const key = normRef(o.orderNo);
     if (key && !refMap.has(key)) refMap.set(key, idx);
   });
 
-  // Pass 1 — reserve exact ref matches so a fuzzy/name guess can never steal an
-  // order that another label matches exactly.
-  const chosenOf = new Array(S.pages.length).fill(-1);
-  const refKeys  = S.pages.map(p => normRef(p.refNo));
-  for (let i = 0; i < S.pages.length; i++) {
-    S.pages[i].notInCsv = false;
-    const rk = refKeys[i];
-    if (rk == null) continue;
-    const idx = refMap.get(rk);
-    if (idx !== undefined && !used[idx]) { chosenOf[i] = idx; used[idx] = true; }
+  const proposals = [];
+  S.pages.forEach((page, p) => {
+    page.notInCsv = false;
+    const name = extractAddress(page.addressLines).name || '';
+    const hasName = /[a-z]{3}/i.test(name);
+    const nameFit = (o) => (hasName ? nameScore(name, orders[o].shipName) : 0);
+
+    const readings = page.manualRef ? [page.refNo]
+      : (page.refCandidates && page.refCandidates.length ? page.refCandidates : (page.refNo ? [page.refNo] : []));
+    const best = new Map();   // order idx -> best proposal from this page
+    const offer = (o, score, confident) => {
+      const prev = best.get(o);
+      if (!prev || score > prev.score) best.set(o, { p, o, score, confident });
+    };
+
+    readings.forEach((reading, ri) => {
+      const key = normRef(reading);
+      if (!key) return;
+      const exactOnly = page.refSource === 'text' && !page.manualRef;
+      const weight = ri === 0 ? 1 : 0.85;   // the majority OCR reading leads
+      for (const { ref, swaps } of refVariants(key, exactOnly ? 0 : 2)) {
+        const o = refMap.get(ref);
+        if (o === undefined) continue;
+        const ns = nameFit(o);
+        if (page.manualRef) {
+          offer(o, (swaps ? 50 : 100) - swaps + ns, !swaps || ns >= 0.34);
+        } else if (exactOnly) {
+          offer(o, 20 + ns, true);
+        } else {
+          const score = (swaps ? 0.6 - 0.15 * (swaps - 1) : 1) * weight
+                      + 1.5 * ns - (hasName && ns < 0.15 ? 0.5 : 0);
+          offer(o, score, swaps ? ns >= 0.6 : (!hasName || ns >= 0.34));
+        }
+      }
+    });
+
+    if (!readings.length && hasName) {
+      orders.forEach((_, o) => {
+        const ns = nameFit(o);
+        if (ns >= 0.5) offer(o, 0.8 * ns, true);
+      });
+    }
+    proposals.push(...best.values());
+  });
+
+  proposals.sort((a, b) => b.score - a.score);
+  const usedOrder = new Array(orders.length).fill(false);
+  const assigned  = new Array(S.pages.length).fill(null);
+  for (const pr of proposals) {
+    if (assigned[pr.p] || usedOrder[pr.o]) continue;
+    assigned[pr.p] = pr;
+    usedOrder[pr.o] = true;
   }
 
-  // Pass 2 — everything still unmatched: fuzzy ref, then name/positional.
-  for (let i = 0; i < S.pages.length; i++) {
-    const pageName = extractAddress(S.pages[i].addressLines).name || '';
-    let chosen = chosenOf[i], confident = true;
-    if (chosen >= 0) { /* exact match reserved in pass 1 */ }
-    else {
-    const refKey = refKeys[i];
-    if (refKey != null) {
-      // A legible order number that isn't an exact CSV hit. OCR sometimes
-      // confuses look-alike digits (0/9, 8/6, 1/7…) — if exactly one unused
-      // order matches after allowing those swaps, take it but flag it CHECK.
-      const fz = fuzzyRefIndex(refKey, refMap, used);
-      if (fz >= 0) { chosen = fz; confident = false; }
-      else { S.pages[i].notInCsv = true; notInCsv++; }
-    } else if (i < orders.length && !used[i] && nameScore(pageName, orders[i].shipName) >= 0.34) {
-      chosen = i;                            // no ref → positional guess
-    } else {
-      // No legible ref → best-scoring still-unused order by name.
-      let best = -1, bestScore = 0;
-      for (let j = 0; j < orders.length; j++) {
-        if (used[j]) continue;
-        const s = nameScore(pageName, orders[j].shipName);
-        if (s > bestScore) { bestScore = s; best = j; }
-      }
-      if (best >= 0 && bestScore >= 0.5) { chosen = best; }
-      else if (i < orders.length && !used[i]) { chosen = i; confident = (pageName === ''); }
+  // A page that read an order number nobody could match is flagged rather
+  // than guessed; a page with no number at all falls back to row position.
+  S.pages.forEach((page, p) => {
+    if (assigned[p]) return;
+    if (page.manualRef || (page.refCandidates && page.refCandidates.length) || page.refNo) {
+      page.notInCsv = true;
+      return;
     }
+    if (p < orders.length && !usedOrder[p]) {
+      const name = extractAddress(page.addressLines).name || '';
+      assigned[p] = { p, o: p, confident: name === '' || nameScore(name, orders[p].shipName) >= 0.34 };
+      usedOrder[p] = true;
     }
+  });
 
-    if (chosen >= 0) {
-      used[chosen] = true;
-      const o = orders[chosen];
-      S.pages[i].order = { orderNo: o.orderNo, shipName: o.shipName, qty: o.qty, sub: o.sub, first: o.first, confident };
-      S.pages[i].type  = o.type;
+  let matched = 0, notInCsv = 0;
+  S.pages.forEach((page, p) => {
+    const a = assigned[p];
+    if (a) {
+      const o = orders[a.o];
+      page.order = { orderNo: o.orderNo, shipName: o.shipName, qty: o.qty, sub: o.sub, first: o.first, confident: a.confident };
+      if (!page.manualType) page.type = o.type;
       matched++;
     } else {
-      S.pages[i].order = null;
+      page.order = null;
+      if (page.notInCsv) notInCsv++;
     }
-    refreshRow(i);
-  }
+    refreshRow(p);
+  });
 
   const clean = matched === S.pages.length;
   let msg = `Auto-tagged ${matched} of ${S.pages.length} labels from CSV`;
@@ -853,9 +902,20 @@ async function renderPdfPreview() {
   await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
   S.pdfBitmap = off;
 
+  // Auto-detect the label kind from page 1 so the matching layout loads.
+  try {
+    const txt = (await page.getTextContent()).items.map(it => it.str).join(' ');
+    const intl = /CN22|CUSTOMS\s*DECLARATION/i.test(txt) ? true
+               : /OVERNIGHT|NZ\s*POST|Cust\s*Ref/i.test(txt) ? false : null;
+    if (intl !== null && intl !== S.international) {
+      S.international = intl;
+      document.getElementById('intlCheckbox').checked = intl;
+    }
+  } catch (_) { /* no text layer — keep the toggle as set */ }
+
   const inset = 10;
   S.crop = { x: inset, y: inset, w: canvas.width - 2 * inset, h: canvas.height - 2 * inset };
-  initLogo();
+  applySavedLayout();
   render();
 }
 
@@ -873,6 +933,121 @@ function initLogo() {
   S.logoX = S.crop.x + (S.crop.w - S.logoW) / 2;
   S.logoY = S.crop.y + (S.crop.h - h) / 2;
 }
+
+// ── Layout presets (crop + logo placement) ───────────────────────────────────
+// Stored in PDF points so they survive window resizes, one per label kind
+// (local and CN22 labels differ). Paste an exported layout into
+// DEFAULT_LAYOUTS to make it the built-in default on every machine.
+const DEFAULT_LAYOUTS = { domestic: null, intl: null };
+const LAYOUT_KEY = (mode) => `labelEditor.layout.${mode}`;
+const layoutMode = () => (S.international ? 'intl' : 'domestic');
+const MODE_NAME  = { domestic: 'Local', intl: 'International' };
+
+function currentLayout() {
+  const r = (v) => Math.round(v / S.scale * 100) / 100;
+  return {
+    page: { w: Math.round(S.pdfPageW * 100) / 100, h: Math.round(S.pdfPageH * 100) / 100 },
+    crop: { x: r(S.crop.x), y: r(S.crop.y), w: r(S.crop.w), h: r(S.crop.h) },
+    logo: { x: r(S.logoX), y: r(S.logoY), w: r(S.logoW) },
+  };
+}
+
+function savedLayout(mode) {
+  try {
+    const s = localStorage.getItem(LAYOUT_KEY(mode));
+    if (s) return { layout: JSON.parse(s), source: 'saved' };
+  } catch (_) { /* storage blocked — fall through */ }
+  return DEFAULT_LAYOUTS[mode] ? { layout: DEFAULT_LAYOUTS[mode], source: 'built-in' } : null;
+}
+
+// Apply a layout to the current page, scaling proportionally if this PDF's
+// page size differs from the one it was recorded on.
+function applyLayout(layout, { crop = true, logo = true } = {}) {
+  const sx = S.scale * (layout.page && layout.page.w ? S.pdfPageW / layout.page.w : 1);
+  const sy = S.scale * (layout.page && layout.page.h ? S.pdfPageH / layout.page.h : 1);
+  if (crop && layout.crop) {
+    const x = clamp(layout.crop.x * sx, 0, canvas.width  - MIN_CROP);
+    const y = clamp(layout.crop.y * sy, 0, canvas.height - MIN_CROP);
+    S.crop = {
+      x, y,
+      w: clamp(layout.crop.w * sx, MIN_CROP, canvas.width  - x),
+      h: clamp(layout.crop.h * sy, MIN_CROP, canvas.height - y),
+    };
+  }
+  if (logo && layout.logo && S.logoImg.naturalWidth) {
+    S.logoW = Math.max(MIN_LOGO, layout.logo.w * sx);
+    S.logoX = layout.logo.x * sx;
+    S.logoY = layout.logo.y * sy;
+    constrainLogo();
+  }
+}
+
+// Apply the saved layout for the current label kind, or the auto-fit default.
+function applySavedLayout({ crop = true, logo = true } = {}) {
+  const s = S.pdfPageW ? savedLayout(layoutMode()) : null;
+  if (s) applyLayout(s.layout, { crop, logo });
+  else if (logo) initLogo();
+  updateLayoutNote(s);
+}
+
+function updateLayoutNote(s = savedLayout(layoutMode())) {
+  const el = document.getElementById('layoutNote');
+  if (!el) return;
+  const mode = MODE_NAME[layoutMode()];
+  el.textContent = s
+    ? `${mode} layout applied (${s.source === 'saved' ? 'your saved default' : 'built-in'}) · drag to adjust`
+    : `No saved ${mode.toLowerCase()} layout yet — position it, then “Save as default”`;
+}
+
+function saveLayout() {
+  if (!S.pdfBitmap) return;
+  const mode = layoutMode();
+  try { localStorage.setItem(LAYOUT_KEY(mode), JSON.stringify(currentLayout())); }
+  catch (_) { return showStatus('Could not save the layout — browser storage is blocked.', 'error'); }
+  updateLayoutNote();
+  showStatus(`Saved as the default ${MODE_NAME[mode].toLowerCase()} layout — it'll be applied automatically next time.`, 'success');
+}
+
+// Both kinds in one file: the on-screen layout for the current kind, the
+// saved one for the other.
+async function exportLayout() {
+  const mode = layoutMode();
+  const out = { version: 1 };
+  for (const m of ['domestic', 'intl']) {
+    if (m === mode && S.pdfBitmap) out[m] = currentLayout();
+    else { const s = savedLayout(m); out[m] = s ? s.layout : null; }
+  }
+  const json = JSON.stringify(out, null, 2);
+  let copied = false;
+  try { await navigator.clipboard.writeText(json); copied = true; } catch (_) { /* not allowed here */ }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = 'label-layout.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showStatus(`Layout exported to label-layout.json${copied ? ' and copied to the clipboard' : ''}.`, 'success');
+}
+
+document.getElementById('layoutInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch (_) { return showStatus('That file isn’t a valid layout export.', 'error'); }
+  const modes = ['domestic', 'intl'].filter(m => data[m] && data[m].crop);
+  if (!modes.length) return showStatus('No layouts found in that file.', 'error');
+  try { modes.forEach(m => localStorage.setItem(LAYOUT_KEY(m), JSON.stringify(data[m]))); }
+  catch (_) { return showStatus('Could not save the layout — browser storage is blocked.', 'error'); }
+  if (S.pdfBitmap && modes.includes(layoutMode())) {
+    applySavedLayout();
+    render();
+    if (S.logoImg.naturalWidth) buildPagesList();
+  } else {
+    updateLayoutNote();
+  }
+  showStatus(`Imported the ${modes.map(m => MODE_NAME[m].toLowerCase()).join(' and ')} layout${modes.length > 1 ? 's' : ''}.`, 'success');
+});
 
 function checkReady() {
   const ready = S.pdfBitmap && S.logoImg.complete && S.logoImg.naturalWidth;
@@ -974,30 +1149,29 @@ function normRef(s) {
   return m ? m[0] : null;
 }
 
-// Common OCR digit confusions. Used to recover a ref when the exact reading
-// isn't in the CSV — accepted only when a single unused order matches.
-const DIGIT_CONFUSIONS = {
-  '0': ['0', '9', '8'], '9': ['9', '0'],
-  '8': ['8', '6', '0'], '6': ['6', '8', '5'],
-  '5': ['5', '6'],      '1': ['1', '7'], '7': ['7', '1'],
+// Digits OCR confuses for one another. Used to propose look-alike order
+// numbers so the matcher can weigh them against the recipient's name.
+const DIGIT_LOOKALIKES = {
+  '0': '986', '9': '08', '8': '0693', '6': '850', '5': '63',
+  '3': '85',  '1': '74', '7': '12',   '4': '1',   '2': '7',
 };
-function fuzzyRefIndex(refKey, refMap, used) {
-  const m = (refKey || '').match(/^R(\d+)$/);
-  if (!m) return -1;
-  let variants = [''];
-  for (const d of m[1]) {
-    const opts = DIGIT_CONFUSIONS[d] || [d];
+// Every variant of an "R####" ref with up to `maxSwaps` look-alike digits
+// substituted, tagged with how many swaps it took (0 = the reading itself).
+function refVariants(key, maxSwaps = 2) {
+  const m = (key || '').match(/^R(\d+)$/);
+  if (!m) return [];
+  let out = [{ d: '', swaps: 0 }];
+  for (const ch of m[1]) {
     const next = [];
-    for (const v of variants) for (const o of opts) next.push(v + o);
-    variants = next;
-    if (variants.length > 256) return -1;   // too ambiguous — bail
+    for (const v of out) {
+      next.push({ d: v.d + ch, swaps: v.swaps });
+      if (v.swaps < maxSwaps) {
+        for (const alt of (DIGIT_LOOKALIKES[ch] || '')) next.push({ d: v.d + alt, swaps: v.swaps + 1 });
+      }
+    }
+    out = next;
   }
-  const hits = new Set();
-  for (const v of variants) {
-    const idx = refMap.get('R' + v);
-    if (idx !== undefined && !used[idx]) hits.add(idx);
-  }
-  return hits.size === 1 ? [...hits][0] : -1;
+  return out.map(v => ({ ref: 'R' + v.d, swaps: v.swaps }));
 }
 
 // Pull the order number out of a blob of label text. NZ Post prints
@@ -1065,33 +1239,100 @@ async function extractCustRef(pdfPage, vpScale, cX, cY, cW, cH) {
   return parseCustRef(parts.join(' '));
 }
 
-// OCR fallback: read the Cust Ref band for raster-only labels with no text
-// layer. Domestic = left-centre below the service code; CN22 = "Ref: #R…" at the
-// bottom-left. Restricting Tesseract to digits + R#: cuts down 0/9 style misreads.
-async function ocrCustRefRegion(fullCanvas, cX, cY, cW, cH, ocrWorker) {
+// OCR fallback for labels with no text layer. The 0/9 and 1/7 misreads came
+// from OCR'ing an upscaled, blurry copy of a 2.5x render. Instead: re-render
+// just the order-number band straight from the PDF at high resolution,
+// binarise it, OCR it at more than one threshold and vote. Returns the
+// winning reading plus every distinct reading, so the CSV matcher can still
+// weigh the alternatives against the recipient's name.
+const REF_OCR_SCALE = 7;
+
+async function renderRegion(pdfPage, scale, x, y, w, h) {
+  const vp = pdfPage.getViewport({ scale, offsetX: -x, offsetY: -y });
+  const c = document.createElement('canvas');
+  c.width  = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  await pdfPage.render({ canvasContext: g, viewport: vp }).promise;
+  return c;
+}
+
+// Pure black-and-white copy using an Otsu threshold, nudged by `bias`
+// (negative = thinner strokes, positive = bolder).
+function binarise(src, bias = 0) {
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.drawImage(src, 0, 0);
+  const img = g.getImageData(0, 0, c.width, c.height);
+  const d = img.data, n = c.width * c.height;
+  const gray = new Uint8ClampedArray(n);
+  const hist = new Array(256).fill(0);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const v = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000 | 0;
+    gray[i] = v; hist[v]++;
+  }
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, best = 0, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = n - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const diff = sumB / wB - (sum - sumB) / wF;
+    const between = wB * wF * diff * diff;
+    if (between > best) { best = between; thr = t; }
+  }
+  thr = clamp(thr + bias, 0, 255);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const v = gray[i] > thr ? 255 : 0;
+    d[j] = d[j + 1] = d[j + 2] = v;
+    d[j + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+async function ocrCustRef(pdfPage, ocrScale, cX, cY, cW, cH, ocrWorker) {
   const band = S.international
     ? { x: 0.00, y: 0.62, w: 0.40, h: 0.16 }   // "A/C … Ref: #R…" row
-    : { x: 0.26, y: 0.08, w: 0.28, h: 0.24 };
-  const srcX = cX + cW * band.x;
-  const srcY = cY + cH * band.y;
-  const srcW = cW * band.w;
-  const srcH = cH * band.h;
+    : { x: 0.26, y: 0.08, w: 0.28, h: 0.24 };  // "Cust Ref: #R…" block
+  const k = REF_OCR_SCALE / ocrScale;
+  const raw = await renderRegion(pdfPage, REF_OCR_SCALE,
+    (cX + cW * band.x) * k, (cY + cH * band.y) * k, cW * band.w * k, cH * band.h * k);
 
-  const scale = 3;
-  const c = document.createElement('canvas');
-  c.width  = Math.round(srcW * scale);
-  c.height = Math.round(srcH * scale);
-  c.getContext('2d').drawImage(fullCanvas, srcX, srcY, srcW, srcH, 0, 0, c.width, c.height);
-
-  let text = '';
+  const readings = [];
   try {
-    await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789R#rRefEF: ', tessedit_pageseg_mode: '6' });
-    text = (await ocrWorker.recognize(c)).data.text;
+    await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789R#CustRef: ', tessedit_pageseg_mode: '6' });
+    for (const bias of [0, -30, 30]) {
+      const r = parseCustRef((await ocrWorker.recognize(binarise(raw, bias))).data.text);
+      if (r) readings.push(r);
+      // Two agreeing passes is enough; only pay for a third on disagreement.
+      if (readings.length === 2 && readings[0] === readings[1]) break;
+    }
   } finally {
     // Restore defaults so the address OCR still reads letters normally.
     await ocrWorker.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '3' });
   }
-  return parseCustRef(text);
+  if (!readings.length) return { ref: null, candidates: [] };
+
+  const counts = new Map();
+  readings.forEach(r => counts.set(r, (counts.get(r) || 0) + 1));
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  let ref = ranked[0];
+  // Three different readings of the same length: vote digit by digit.
+  if (counts.get(ref) === 1 && readings.length >= 3 && readings.every(r => r.length === ref.length)) {
+    ref = [...ref].map((_, p) => {
+      const c = {};
+      readings.forEach(r => { c[r[p]] = (c[r[p]] || 0) + 1; });
+      return Object.entries(c).sort((a, b) => b[1] - a[1])[0][0];
+    }).join('');
+  }
+  return { ref, candidates: [ref, ...ranked.filter(r => r !== ref)] };
 }
 
 // OCR fallback for raster-only labels. Domestic recipient sits top-right; the
@@ -1132,6 +1373,9 @@ function preCleanLine(line) {
     if (!m) break;
     const [, prefix, rest] = m;
     if (/^(RD|PO|MR|MRS|DR|MS|MX|ST|LT|RR)$/i.test(prefix)) break;
+    // A short ALL-CAPS word with a vowel before another caps word is a first
+    // name (BOB JONES, MIA WONG, SUE MARLOW), not OCR junk like "HL" or "wun".
+    if (/^[A-Z]{2,3}$/.test(prefix) && /[AEIOUY]/.test(prefix) && /^[A-Z]{2,}/.test(rest)) break;
     // Drop if prefix has non-letters, OR the remainder begins with a digit
     // (street number) or a multi-letter uppercase word (proper noun).
     if (/[^A-Za-z]/.test(prefix) || /^\d/.test(rest) || /^[A-Z]{2,}/.test(rest)) {
@@ -1237,7 +1481,7 @@ async function buildPagesList() {
     const cX = S.crop.x * f, cY = S.crop.y * f;
     const cW = S.crop.w * f, cH = S.crop.h * f;
 
-    let lines = [], ref = null, cropText = '';
+    let lines = [], ref = null, cropText = '', refSource = null, refCandidates = [];
     try {
       // Prefer the digital text layer. Fall back to OCR only when the layer
       // is missing or sparse (e.g., scanned/rasterised labels).
@@ -1248,7 +1492,15 @@ async function buildPagesList() {
         loadingEl.textContent = `OCR ${i} of ${count}…`;
         lines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
       }
-      if (!ref) ref = await ocrCustRefRegion(full, cX, cY, cW, cH, ocrWorker);
+      if (ref) {
+        refSource = 'text';
+        refCandidates = [ref];
+      } else {
+        const o = await ocrCustRef(page, OCR_SCALE, cX, cY, cW, cH, ocrWorker);
+        ref = o.ref;
+        refCandidates = o.candidates;
+        refSource = ref ? 'ocr' : null;
+      }
     } catch (_) { lines = []; }
 
     if (gen !== _buildGen) { await ocrWorker.terminate(); return; }  // superseded mid-page
@@ -1265,7 +1517,10 @@ async function buildPagesList() {
 
     // srcIdx maps back to the original PDF page for zoom + export, since the
     // list index no longer matches once non-label pages are skipped.
-    S.pages.push({ type: 'DOUBLE', thumb, addressLines: lines, customText: '', order: null, refNo: ref, notInCsv: false, srcIdx: i - 1 });
+    S.pages.push({
+      type: 'DOUBLE', thumb, addressLines: lines, customText: '', order: null, notInCsv: false, srcIdx: i - 1,
+      refNo: ref, ocrRef: ref, refCandidates, refSource, manualRef: false, manualType: false,
+    });
     addPageRow(S.pages.length - 1);
   }
 
@@ -1342,7 +1597,7 @@ function addPageRow(i) {
     if (page.type === opt.value) item.classList.add('active');
     item.addEventListener('click', () => {
       S.pages[i].type = opt.value;
-      S.pages[i].order = null;   // manual override clears the CSV auto-tag
+      S.pages[i].manualType = true;   // manual pick sticks through CSV re-matches
       chip.dataset.type = opt.value;
       chip.querySelector('.chip-label').textContent = getChipLabel(S.pages[i]);
       menu.querySelectorAll('.type-menu-item').forEach(b => b.classList.toggle('active', b.dataset.option === opt.value));
@@ -1418,24 +1673,97 @@ function updateRowIdentity(i) {
     nameEl.style.fontWeight = '500';
   }
 
+  // The order number is clickable so a misread can be corrected by hand.
+  const refLabel = page.order ? page.order.orderNo : (page.refNo ? '#' + page.refNo.replace(/^#/, '') : '');
+  const refHtml = (refLabel || S.orders)
+    ? `<span class="ref-edit" data-i="${i}" title="Click to correct the order number">${refLabel ? esc(refLabel) : '+ order #'}${page.manualRef ? ' ✎' : ''}</span>`
+    : '';
+
   if (page.order) {
     addrEl.className = 'addr';
     const tag = page.order.confident
       ? '<span class="csv-tag ok">CSV</span>'
       : '<span class="csv-tag check">CHECK</span>';
-    addrEl.innerHTML = `${page.order.orderNo} · ${page.order.qty} item${page.order.qty === 1 ? '' : 's'}${tag}`;
+    addrEl.innerHTML = `${refHtml} · ${page.order.qty} item${page.order.qty === 1 ? '' : 's'}${tag}`;
   } else if (page.notInCsv) {
     // Label has a real order number that the CSV doesn't cover — say so loudly
     // and set the type manually.
     addrEl.className = 'addr';
-    const ref = page.refNo ? '#' + page.refNo.replace(/^#/, '') : 'order';
-    addrEl.innerHTML = `${ref}<span class="csv-tag miss">NOT IN CSV</span>`;
+    addrEl.innerHTML = `${refHtml}<span class="csv-tag miss">NOT IN CSV</span>`;
   } else if (ocr.address) {
     addrEl.className = 'addr';
-    addrEl.textContent = ocr.address;
+    addrEl.innerHTML = (refHtml ? refHtml + ' · ' : '') + esc(ocr.address);
   } else {
     addrEl.className = 'addr empty';
-    addrEl.textContent = name ? 'No street address detected' : '—';
+    addrEl.innerHTML = refHtml || (name ? 'No street address detected' : '—');
+  }
+}
+
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Swap the order number for a text box; Enter/blur commits, Esc cancels.
+function startRefEdit(i, el) {
+  const page = S.pages[i];
+  const input = document.createElement('input');
+  input.className = 'ref-input';
+  input.placeholder = 'R1234';
+  input.value = (page.order ? normRef(page.order.orderNo) : page.refNo) || '';
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    if (commit) commitRefEdit(i, input.value);
+    else updateRowIdentity(i);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
+// Check a hand-typed order number against the CSV. If it isn't there but a
+// look-alike-digit variant is, correct it to that order.
+function commitRefEdit(i, raw) {
+  const page = S.pages[i];
+  const typed = (raw || '').toUpperCase().replace(/[^R0-9]/g, '');
+  if (!typed) {                                  // cleared: back to what the label read
+    if (!page.manualRef) return updateRowIdentity(i);
+    page.manualRef = false;
+    page.refNo = page.ocrRef;
+  } else {
+    const key = normRef(/^\d/.test(typed) ? 'R' + typed : typed);
+    if (!key) {
+      updateRowIdentity(i);
+      return showStatus(`"${raw}" isn't an order number — expected something like R3298.`, 'error');
+    }
+    const current = page.order ? normRef(page.order.orderNo) : page.refNo;
+    if (key === current) return updateRowIdentity(i);
+    page.refNo = key;
+    page.manualRef = true;
+  }
+
+  if (!S.orders) {
+    updateRowIdentity(i);
+    return showStatus(`Label ${i + 1} set to #${page.refNo} — load the orders CSV to check it.`, 'info');
+  }
+  applyCsvTypes();
+  if (!page.manualRef) return;
+
+  const got = page.order ? normRef(page.order.orderNo) : null;
+  if (!got) {
+    showStatus(`#${page.refNo} isn't in the orders CSV — label ${i + 1} flagged.`, 'error');
+  } else if (got !== page.refNo) {
+    const was = page.refNo;
+    page.refNo = got;
+    updateRowIdentity(i);
+    showStatus(`Label ${i + 1}: #${was} isn't in the CSV — corrected to ${page.order.orderNo} (${page.order.shipName}).`, 'success');
+  } else {
+    showStatus(`Label ${i + 1} set to ${page.order.orderNo} (${page.order.shipName}).`, 'success');
   }
 }
 
@@ -1470,13 +1798,20 @@ function updateCustomInput(i) {
 function setAllTypes(type) {
   S.pages.forEach((p, i) => {
     p.type = type;
-    p.order = null;   // manual override clears any CSV auto-tag
+    p.manualType = true;   // manual pick sticks through CSV re-matches
     refreshRow(i);
   });
   closeAllMenus();
 }
 
 document.addEventListener('click', closeAllMenus);
+
+document.getElementById('pagesList').addEventListener('click', (e) => {
+  const el = e.target.closest('.ref-edit');
+  if (!el) return;
+  e.stopPropagation();
+  startRefEdit(+el.dataset.i, el);
+});
 
 // ── Export print file ─────────────────────────────────────────────────────────
 async function exportPrintFile() {
@@ -1686,8 +2021,9 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(
 // ── International mode toggle ──────────────────────────────────────────────────
 document.getElementById('intlCheckbox').addEventListener('change', (e) => {
   S.international = e.target.checked;
-  // Re-read the already-loaded labels with the new layout profile.
-  if (S.pdfBitmap) buildPagesList();
+  // Load that kind's saved crop/logo, then re-read the labels with it.
+  if (S.pdfBitmap) { applySavedLayout(); render(); buildPagesList(); }
+  else updateLayoutNote();
 });
 
 function showStatus(msg, type) {
