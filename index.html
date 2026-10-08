@@ -270,7 +270,7 @@
         </div>
       </div>
       <div>
-        <p class="text-xs font-medium mb-1.5" style="color:var(--faint);">Logo</p>
+        <p id="logoModeLabel" class="text-xs font-medium mb-1.5" style="color:var(--faint);">Local logo</p>
         <div id="logoZone" class="drop-zone px-4 py-5 text-center cursor-pointer"
           onclick="document.getElementById('logoInput').click()">
           <input type="file" id="logoInput" accept="image/png,image/jpeg" class="hidden" />
@@ -384,9 +384,11 @@ const S = {
   pages: [],
   orders: null,   // parsed orders_export.csv rows (or null)
   international: false,   // CN22 customs-label layout
+  modeLogos: { domestic: null, intl: null },   // uploaded logo per label kind
+  activeLogoKey: null,
 };
 
-// Recipient-block location as fractions of the crop, per label layout.
+// Recipient-block location as fractions of the PAGE, per label layout.
 // Domestic NZ Post: right column, top half. International CN22: left "TO" box.
 const RECIPIENT_REGION = {
   domestic: { minX: 0.50, maxX: 1.00, minY: 0.07, maxY: 0.55 },
@@ -622,28 +624,82 @@ setupDropZone('pdfZone', 'pdfInput', async (files) => {
 }, true);
 
 // ── Logo handler ──────────────────────────────────────────────────────────────
+// Each label kind has its own logo. An upload applies to whichever kind is
+// active and is remembered in this browser, so it only needs uploading once;
+// the kind's layout then places it automatically.
+const LOGO_KEY = (mode) => `labelEditor.logo.${mode}`;
+
 setupDropZone('logoZone', 'logoInput', async (file) => {
   if (!file.type.startsWith('image/'))
     return showStatus('Please upload a PNG or JPG image.', 'error');
+  const url = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  const mode = layoutMode();
+  const type = (file.type === 'image/png' || /\.png$/i.test(file.name)) ? 'png' : 'jpg';
+  S.modeLogos[mode] = logoFromDataUrl(url, type, file.name);
+  try { localStorage.setItem(LOGO_KEY(mode), JSON.stringify({ name: file.name, type, url })); }
+  catch (_) { /* storage blocked or full — the logo still works this session */ }
+  await activateModeLogo();
+  if (S.pdfBitmap) applySavedLayout({ crop: false });
+  checkReady();
+});
 
-  S.logoBytes = new Uint8Array(await file.arrayBuffer());
-  S.logoType  = (file.type === 'image/png' || file.name.toLowerCase().endsWith('.png')) ? 'png' : 'jpg';
+function logoFromDataUrl(url, type, name) {
+  const bin = atob(url.slice(url.indexOf(',') + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { key: `${name}:${bin.length}:${url.length}`, bytes, type, url, name };
+}
 
-  const url = URL.createObjectURL(file);
-  S.logoImg.src = url;
+function restoreLogos() {
+  for (const mode of ['domestic', 'intl']) {
+    try {
+      const s = JSON.parse(localStorage.getItem(LOGO_KEY(mode)) || 'null');
+      if (s && s.url) S.modeLogos[mode] = logoFromDataUrl(s.url, s.type, s.name);
+    } catch (_) { /* storage blocked or corrupt — upload again */ }
+  }
+  activateModeLogo();
+}
+
+// Make the active label kind's logo the one used for preview and export.
+async function activateModeLogo() {
+  const mode = layoutMode();
+  document.getElementById('logoModeLabel').textContent = `${MODE_NAME[mode]} logo`;
+  const logo = S.modeLogos[mode];
+  const thumb = document.getElementById('logoThumb');
+  const n = document.getElementById('logoZoneName');
+  if (!logo) {
+    // This kind has no logo yet: clear the previous kind's so it isn't
+    // printed in the wrong place, and ask for an upload.
+    S.activeLogoKey = null;
+    S.logoBytes = null;
+    S.logoImg = new Image();
+    thumb.classList.add('hidden');
+    n.classList.add('hidden');
+    document.getElementById('logoZoneText').classList.remove('hidden');
+    document.getElementById('logoZone').classList.remove('has-file');
+    return;
+  }
+  if (S.activeLogoKey === logo.key) return;
+  S.activeLogoKey = logo.key;
+  S.logoBytes = logo.bytes;
+  S.logoType  = logo.type;
+  S.logoImg = new Image();
+  S.logoImg.src = logo.url;
   await new Promise(res => { S.logoImg.onload = res; S.logoImg.onerror = res; });
   S.logoAspect = (S.logoImg.naturalWidth / S.logoImg.naturalHeight) || 1;
 
-  const thumb = document.getElementById('logoThumb');
-  thumb.src = url; thumb.classList.remove('hidden');
+  thumb.src = logo.url;
+  thumb.classList.remove('hidden');
   document.getElementById('logoZoneText').classList.add('hidden');
-  const n = document.getElementById('logoZoneName');
-  n.textContent = file.name; n.classList.remove('hidden');
+  n.textContent = logo.name;
+  n.classList.remove('hidden');
   document.getElementById('logoZone').classList.add('has-file');
-
-  if (S.pdfBitmap) { applySavedLayout({ crop: false }); render(); }
-  checkReady();
-});
+}
 
 // ── Orders CSV handler ────────────────────────────────────────────────────────
 setupDropZone('csvZone', 'csvInput', async (file) => {
@@ -791,6 +847,7 @@ function applyCsvTypes() {
   const proposals = [];
   S.pages.forEach((page, p) => {
     page.notInCsv = false;
+    page.unmatched = false;
     const name = extractAddress(page.addressLines).name || '';
     const hasName = /[a-z]{3}/i.test(name);
     const nameFit = (o) => (hasName ? nameScore(name, orders[o].shipName) : 0);
@@ -842,22 +899,18 @@ function applyCsvTypes() {
     usedOrder[pr.o] = true;
   }
 
-  // A page that read an order number nobody could match is flagged rather
-  // than guessed; a page with no number at all falls back to row position.
+  // Anything left is flagged, never guessed: a number the CSV doesn't have is
+  // NOT IN CSV; a label with no readable number or name is NO MATCH and can be
+  // fixed by clicking its order number. (CSV row position used to fill this
+  // gap, but labels aren't printed in CSV order, so it put other customers'
+  // orders on these labels.)
   S.pages.forEach((page, p) => {
     if (assigned[p]) return;
-    if (page.manualRef || (page.refCandidates && page.refCandidates.length) || page.refNo) {
-      page.notInCsv = true;
-      return;
-    }
-    if (p < orders.length && !usedOrder[p]) {
-      const name = extractAddress(page.addressLines).name || '';
-      assigned[p] = { p, o: p, confident: name === '' || nameScore(name, orders[p].shipName) >= 0.34 };
-      usedOrder[p] = true;
-    }
+    if (page.manualRef || (page.refCandidates && page.refCandidates.length) || page.refNo) page.notInCsv = true;
+    else page.unmatched = true;
   });
 
-  let matched = 0, notInCsv = 0;
+  let matched = 0, notInCsv = 0, unmatched = 0;
   S.pages.forEach((page, p) => {
     const a = assigned[p];
     if (a) {
@@ -868,6 +921,7 @@ function applyCsvTypes() {
     } else {
       page.order = null;
       if (page.notInCsv) notInCsv++;
+      else if (page.unmatched) unmatched++;
     }
     refreshRow(p);
   });
@@ -875,9 +929,9 @@ function applyCsvTypes() {
   const clean = matched === S.pages.length;
   let msg = `Auto-tagged ${matched} of ${S.pages.length} labels from CSV`;
   if (notInCsv) msg += ` — ${notInCsv} label${notInCsv === 1 ? '' : 's'} not in the CSV (flagged in red)`;
-  else if (!clean) msg += ' — check the rest manually';
+  if (unmatched) msg += ` — ${unmatched} label${unmatched === 1 ? '' : 's'} with no readable order number (click "+ order #" to set)`;
   if (S.skippedPages) msg += `; skipped ${S.skippedPages} non-label page${S.skippedPages === 1 ? '' : 's'}`;
-  showStatus(msg + '.', clean ? 'success' : (notInCsv ? 'error' : 'info'));
+  showStatus(msg + '.', clean ? 'success' : 'error');
 }
 
 // ── PDF preview ───────────────────────────────────────────────────────────────
@@ -902,21 +956,35 @@ async function renderPdfPreview() {
   await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
   S.pdfBitmap = off;
 
-  // Auto-detect the label kind from page 1 so the matching layout loads.
+  // Auto-detect the label kind from page 1 so its logo and layout load. NZ Post
+  // labels are flat images, so after the text layer fall back to colour: only
+  // CN22 labels carry the red Post Exprès badge (local labels are pure B&W).
+  let intl = null;
   try {
     const txt = (await page.getTextContent()).items.map(it => it.str).join(' ');
-    const intl = /CN22|CUSTOMS\s*DECLARATION/i.test(txt) ? true
-               : /OVERNIGHT|NZ\s*POST|Cust\s*Ref/i.test(txt) ? false : null;
-    if (intl !== null && intl !== S.international) {
-      S.international = intl;
-      document.getElementById('intlCheckbox').checked = intl;
-    }
-  } catch (_) { /* no text layer — keep the toggle as set */ }
+    intl = /CN22|CUSTOMS\s*DECLARATION/i.test(txt) ? true
+         : /OVERNIGHT|NZ\s*POST|Cust\s*Ref/i.test(txt) ? false : null;
+  } catch (_) { /* no text layer */ }
+  if (intl === null) intl = hasRedBadge(off);
+  if (intl !== S.international) {
+    S.international = intl;
+    document.getElementById('intlCheckbox').checked = intl;
+  }
+  await activateModeLogo();
 
   const inset = 10;
   S.crop = { x: inset, y: inset, w: canvas.width - 2 * inset, h: canvas.height - 2 * inset };
   applySavedLayout();
   render();
+}
+
+function hasRedBadge(c) {
+  const { data } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+  let red = 0, n = 0;
+  for (let i = 0; i < data.length; i += 16, n++) {
+    if (data[i] > 170 && data[i + 1] < 90 && data[i + 2] < 90) red++;
+  }
+  return red / n > 0.001;   // CN22 ≈ 0.006, local labels 0
 }
 
 function initLogo() {
@@ -938,7 +1006,20 @@ function initLogo() {
 // Stored in PDF points so they survive window resizes, one per label kind
 // (local and CN22 labels differ). Paste an exported layout into
 // DEFAULT_LAYOUTS to make it the built-in default on every machine.
-const DEFAULT_LAYOUTS = { domestic: null, intl: null };
+const DEFAULT_LAYOUTS = {
+  // Measured from the print files exported on 8 Oct 2026. NZ Post puts the
+  // label at the same spot on every 595x420pt page, for both kinds.
+  domestic: {   // wordmark in the bottom-right corner, over the sender block
+    page: { w: 595, h: 420 },
+    crop: { x: 43.29, y: 48.56, w: 506, h: 300.4 },
+    logo: { x: 324.79, y: 256.66, w: 224.5 },
+  },
+  intl: {       // full-label overlay
+    page: { w: 595, h: 420 },
+    crop: { x: 48.19, y: 49.36, w: 492.8, h: 300.4 },
+    logo: { x: 48.59, y: 59.36, w: 465.2 },
+  },
+};
 const LAYOUT_KEY = (mode) => `labelEditor.layout.${mode}`;
 const layoutMode = () => (S.international ? 'intl' : 'domestic');
 const MODE_NAME  = { domestic: 'Local', intl: 'International' };
@@ -1239,10 +1320,11 @@ async function extractCustRef(pdfPage, vpScale, cX, cY, cW, cH) {
   return parseCustRef(parts.join(' '));
 }
 
-// OCR fallback for labels with no text layer. The 0/9 and 1/7 misreads came
-// from OCR'ing an upscaled, blurry copy of a 2.5x render. Instead: re-render
+// OCR for labels with no text layer (NZ Post labels are flat images). Re-render
 // just the order-number band straight from the PDF at high resolution,
-// binarise it, OCR it at more than one threshold and vote. Returns the
+// binarise it, OCR it at more than one threshold and vote. It's read as plain
+// sparse text: restricting Tesseract to digits made it drop and invent
+// repeated digits (R1113 -> R113, R1099 -> R10099) and garble the band. Returns the
 // winning reading plus every distinct reading, so the CSV matcher can still
 // weigh the alternatives against the recipient's name.
 const REF_OCR_SCALE = 7;
@@ -1307,7 +1389,7 @@ async function ocrCustRef(pdfPage, ocrScale, cX, cY, cW, cH, ocrWorker) {
 
   const readings = [];
   try {
-    await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789R#CustRef: ', tessedit_pageseg_mode: '6' });
+    await ocrWorker.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '11' });
     for (const bias of [0, -30, 30]) {
       const r = parseCustRef((await ocrWorker.recognize(binarise(raw, bias))).data.text);
       if (r) readings.push(r);
@@ -1415,13 +1497,14 @@ function extractAddress(rawLines) {
     const letters = (line.match(/[A-Za-z]/g) || []).length;
     const upper = (line.match(/[A-Z]/g) || []).length;
     const words = line.split(/\s+/).filter(w => w.length > 1);
-    if (letters >= 4 && upper / letters > 0.65 && words.length >= 2) {
+    if (letters >= 4 && upper / letters > 0.65 && words.length >= 2 && !/\d/.test(line)) {
       nameIdx = i;
       break;
     }
   }
 
-  const name = nameIdx >= 0 ? cleaned[nameIdx] : cleaned[0];
+  const name = nameIdx >= 0 ? cleaned[nameIdx]
+    : (cleaned.find(l => !/\d/.test(l) && (l.match(/[A-Za-z]/g) || []).length >= 4) || null);
 
   // Address = first line after the name that starts with a number or
   // contains a street suffix keyword.
@@ -1481,22 +1564,27 @@ async function buildPagesList() {
     const cX = S.crop.x * f, cY = S.crop.y * f;
     const cW = S.crop.w * f, cH = S.crop.h * f;
 
+    // Name/order-number regions are fractions of the whole page, not the crop:
+    // NZ Post prints every label at the same spot on the page, and tying them
+    // to the crop made them drift whenever the crop changed (e.g. a saved
+    // layout), so the name read landed on the street line instead.
+    const pW = full.width, pH = full.height;
     let lines = [], ref = null, cropText = '', refSource = null, refCandidates = [];
     try {
       // Prefer the digital text layer. Fall back to OCR only when the layer
       // is missing or sparse (e.g., scanned/rasterised labels).
       cropText = await extractCropText(page, OCR_SCALE, cX, cY, cW, cH);
       ref = parseCustRef(cropText);
-      lines = await extractTextRegion(page, OCR_SCALE, cX, cY, cW, cH);
+      lines = await extractTextRegion(page, OCR_SCALE, 0, 0, pW, pH);
       if (lines.length < 2) {
         loadingEl.textContent = `OCR ${i} of ${count}…`;
-        lines = await ocrAddressRegion(full, cX, cY, cW, cH, ocrWorker);
+        lines = await ocrAddressRegion(full, 0, 0, pW, pH, ocrWorker);
       }
       if (ref) {
         refSource = 'text';
         refCandidates = [ref];
       } else {
-        const o = await ocrCustRef(page, OCR_SCALE, cX, cY, cW, cH, ocrWorker);
+        const o = await ocrCustRef(page, OCR_SCALE, 0, 0, pW, pH, ocrWorker);
         ref = o.ref;
         refCandidates = o.candidates;
         refSource = ref ? 'ocr' : null;
@@ -1660,7 +1748,7 @@ function updateRowIdentity(i) {
   const addrEl = row.querySelector('.page-info .addr');
   const ocr = extractAddress(page.addressLines);
 
-  row.classList.toggle('not-in-csv', !!page.notInCsv);
+  row.classList.toggle('not-in-csv', !!(page.notInCsv || page.unmatched));
 
   const name = (page.order && page.order.shipName) || ocr.name;
   nameEl.removeAttribute('style');
@@ -1690,6 +1778,9 @@ function updateRowIdentity(i) {
     // and set the type manually.
     addrEl.className = 'addr';
     addrEl.innerHTML = `${refHtml}<span class="csv-tag miss">NOT IN CSV</span>`;
+  } else if (page.unmatched) {
+    addrEl.className = 'addr';
+    addrEl.innerHTML = `${refHtml}<span class="csv-tag miss">NO MATCH</span>`;
   } else if (ocr.address) {
     addrEl.className = 'addr';
     addrEl.innerHTML = (refHtml ? refHtml + ' · ' : '') + esc(ocr.address);
@@ -2019,11 +2110,13 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(); });
 
 // ── International mode toggle ──────────────────────────────────────────────────
-document.getElementById('intlCheckbox').addEventListener('change', (e) => {
+document.getElementById('intlCheckbox').addEventListener('change', async (e) => {
   S.international = e.target.checked;
-  // Load that kind's saved crop/logo, then re-read the labels with it.
-  if (S.pdfBitmap) { applySavedLayout(); render(); buildPagesList(); }
+  // Switch to that kind's logo and crop, then re-read the labels with it.
+  await activateModeLogo();
+  if (S.pdfBitmap) applySavedLayout();
   else updateLayoutNote();
+  checkReady();
 });
 
 function showStatus(msg, type) {
@@ -2035,6 +2128,8 @@ function showStatus(msg, type) {
   );
   el.classList.remove('hidden');
 }
+
+restoreLogos();
 </script>
 
 <div id="zoomOverlay" class="zoom-overlay">
